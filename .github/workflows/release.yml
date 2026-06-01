@@ -57,26 +57,32 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Check macOS signing secrets
+        if: matrix.platform == 'macos-latest'
+        id: signing
+        run: |
+          if [ -n "$CERT" ] && [ ${#CERT} -gt 100 ]; then
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+
       - name: Build & publish Tauri release
         uses: tauri-apps/tauri-action@v0
         env:
-          # DEPLOY_TOKEN is a GitHub PAT (or fine-grained token) with
-          # Contents: write  — used to create the GitHub Release.
           GITHUB_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-
-          # ── macOS code-signing & notarization ──────────────────────────────
-          # APPLE_CERTIFICATE     : base64-encoded .p12 Developer ID certificate
-          # APPLE_CERTIFICATE_PASSWORD : password for the .p12
-          # APPLE_SIGNING_IDENTITY : "Developer ID Application: Name (TEAMID)"
-          # APPLE_ID              : Apple ID e-mail used for notarytool
-          # APPLE_PASSWORD        : app-specific password for the Apple ID
-          # APPLE_TEAM_ID         : 10-character Team ID
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # ── macOS code-signing (only active when secrets are properly configured) ──
+          # To enable: add these 6 secrets to repo Settings → Secrets → Actions.
+          # Until then builds are unsigned (users right-click → Open on first launch).
+          APPLE_CERTIFICATE:          ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE          || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY:     ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_SIGNING_IDENTITY     || '' }}
+          APPLE_ID:                   ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_ID                   || '' }}
+          APPLE_PASSWORD:             ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_PASSWORD             || '' }}
+          APPLE_TEAM_ID:              ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_TEAM_ID             || '' }}
 
         with:
           # build-${{ github.run_number }} suffix ensures every master merge
