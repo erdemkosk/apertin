@@ -71,19 +71,26 @@ fn scan_directory(dir_path: String) -> Result<Vec<RawMetadata>, String> {
         return Err("Directory does not exist or is not a directory".to_string());
     }
 
+    // These output directories must never be re-scanned to prevent nested folder creation
+    const SKIP_DIRS: &[&str] = &["Selected_to_Edit", "Starred", ".trash"];
+
     let mut file_paths = Vec::new();
-    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(path)
+        .into_iter()
+        .filter_entry(|e| {
+            // For directories: skip output dirs by exact name match
+            if e.file_type().is_dir() {
+                let name = e.file_name().to_str().unwrap_or("");
+                return !SKIP_DIRS.contains(&name);
+            }
+            // For files: skip hidden/dot files (session file, .DS_Store, etc.)
+            let name = e.file_name().to_str().unwrap_or("");
+            !name.starts_with('.')
+        })
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             let file_path = entry.path();
-            // Skip the session file itself and hidden system files
-            if file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with('.'))
-                .unwrap_or(false)
-            {
-                continue;
-            }
             if let Some(ext) = file_path.extension().and_then(|e| e.to_str()) {
                 let ext_lower = ext.to_lowercase();
                 if matches!(

@@ -79,15 +79,20 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
         with:
-          tagName: v__VERSION__
-          releaseName: Apertinder v__VERSION__
+          # build-${{ github.run_number }} suffix ensures every master merge
+          # creates a unique tag — no version bump required between pushes.
+          tagName: v__VERSION__-build.${{ github.run_number }}
+          releaseName: Apertinder v__VERSION__ (build ${{ github.run_number }})
           releaseBody: |
-            ## Apertinder v__VERSION__
+            ## Apertinder v__VERSION__ — build ${{ github.run_number }}
+
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
 
             ### Download
             | Platform | File |
             |----------|------|
-            | macOS (Universal) | `.dmg` |
+            | macOS Universal (Apple Silicon + Intel) | `.dmg` |
             | Windows | `.msi` / `.exe` |
             | Linux | `.deb` / `.AppImage` |
 

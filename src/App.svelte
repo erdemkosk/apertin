@@ -12,6 +12,16 @@
     console.warn("Tauri API not available (browser mode)", e);
   }
 
+  // App version — injected from tauri.conf.json via Vite, overridden by
+  // native Tauri getVersion() at runtime (same source, just a double-check).
+  let appVersion = import.meta.env.VITE_APP_VERSION ?? '0.0.0';
+
+  try {
+    import('@tauri-apps/api/app').then(mod => {
+      mod.getVersion().then(v => { appVersion = v; }).catch(() => {});
+    });
+  } catch (_) {}
+
   // App States
   let state = 'welcome'; // 'welcome' | 'culling' | 'summary' | 'complete'
   let mode = 'gallery'; // 'gallery' | 'tinder' (active culling)
@@ -439,7 +449,11 @@
 
     try {
       cleanupSummaryPreviews();
-      const listToLoad = reviewFilter === 'trash' ? Array.from(trashList) : Array.from(keepList);
+      const listToLoad = reviewFilter === 'trash'
+        ? Array.from(trashList)
+        : reviewFilter === 'star'
+          ? Array.from(starList)
+          : Array.from(keepList);
       for (const path of listToLoad) {
         const file = files.find(f => f.file_path === path);
         if (!file) continue;
@@ -534,6 +548,7 @@
       summaryPreviews = { ...summaryPreviews };
     }
 
+    saveSession();
     await loadSummaryPreviews();
   }
 
@@ -550,22 +565,27 @@
   // Execute Culling Moves/Deletes
   async function confirmCulling() {
     loading = true;
-    loadingMessage = 'Applying culling actions (moving and cleaning up files)...';
-    
-    const keepArr = Array.from(keepList);
-    const trashArr = Array.from(trashList);
+    loadingMessage = 'Applying culling actions…';
+
+    // Starred files override keep/trash — they always go to Starred/
+    const starArr = Array.from(starList);
+    const starSet = new Set(starArr);
+    const keepArr = Array.from(keepList).filter(p => !starSet.has(p));
+    const trashArr = Array.from(trashList).filter(p => !starSet.has(p));
 
     try {
       if (invoke) {
         await invoke('execute_culling_actions', {
           keepList: keepArr,
-          trashList: trashArr
+          trashList: trashArr,
+          starList: starArr,
         });
       } else {
         await new Promise(resolve => setTimeout(resolve, 2000));
-        console.log("Mock culling applied: Keep", keepArr, "Trash", trashArr);
+        console.log("Mock culling applied: Keep", keepArr, "Trash", trashArr, "Star", starArr);
       }
       cleanupSummaryPreviews();
+      await clearSession();
       state = 'complete';
     } catch (e) {
       alert("Error applying culling actions: " + e);
@@ -634,6 +654,7 @@
       <div class="brand">
         <span class="brand-gradient">
           <span style="color: hsl(var(--text-primary))">Aper</span><span style="color: hsl(var(--accent-amber))">tinder</span>
+          <span class="brand-version">v{appVersion}</span>
         </span>
         <div class="brand-sub">Developed with ❤️ by Mustafa Erdem Köşk</div>
       </div>
@@ -755,7 +776,7 @@
           <h1 class="welcome-heading">
             <span class="wordmark-apt">Aper</span><span class="wordmark-tinder">tinder</span>
           </h1>
-          <p class="welcome-tagline">RAW Image Culler</p>
+          <p class="welcome-tagline">RAW Image Culler <span class="welcome-version">v{appVersion}</span></p>
           <p class="welcome-desc">
             Ultra-fast, zero-cloud RAW image culler. Mapped and compiled on your local machine to triage thousands of photos in seconds.
           </p>
@@ -961,35 +982,40 @@
 
           <div class="summary-layout">
             
-            <!-- Statistics row -->
+            <!-- Statistics row / tab switcher -->
             <div class="summary-stats-box glass-panel">
               <button 
                 class="summary-metric stat-tab {reviewFilter === 'keep' ? 'active-tab keep' : ''}"
                 on:click={() => changeReviewFilter('keep')}
               >
                 <span class="metric-num keep">{keepList.size}</span>
-                <span class="metric-label">To Keep (/Selected_to_Edit)</span>
+                <span class="metric-label">To Keep → /Selected_to_Edit</span>
               </button>
               <button 
                 class="summary-metric stat-tab {reviewFilter === 'trash' ? 'active-tab trash' : ''}"
                 on:click={() => changeReviewFilter('trash')}
               >
                 <span class="metric-num trash">{trashList.size}</span>
-                <span class="metric-label">To Trash (/.trash)</span>
+                <span class="metric-label">To Trash → OS Recycle Bin</span>
               </button>
-              <div class="summary-metric passive-metric">
+              <button 
+                class="summary-metric stat-tab {reviewFilter === 'star' ? 'active-tab star' : ''}"
+                on:click={() => changeReviewFilter('star')}
+              >
                 <span class="metric-num star">{starList.size}</span>
-                <span class="metric-label">Starred Favorites</span>
-              </div>
+                <span class="metric-label">Starred → /Starred</span>
+              </button>
             </div>
 
             <!-- Scrollable Grid of Filtered Items -->
             <div class="trash-gallery-section glass-panel">
               <h3 class="trash-gallery-title">
                 {#if reviewFilter === 'trash'}
-                  FILES MARKED FOR DELETION ({trashList.size})
+                  TO TRASH — will be sent to OS recycle bin ({trashList.size})
+                {:else if reviewFilter === 'keep'}
+                  TO KEEP — will be moved to /Selected_to_Edit ({keepList.size})
                 {:else}
-                  FILES MARKED FOR PRESERVATION ({keepList.size})
+                  STARRED — will be moved to /Starred ({starList.size})
                 {/if}
               </h3>
               
@@ -1002,30 +1028,25 @@
                   <div class="trash-grid">
                     {#each Array.from(trashList) as filePath}
                       <div class="trash-card">
-                        <!-- Render the cached preview Blob URL -->
                         <img 
                           src={summaryPreviews[filePath] || 'https://picsum.photos/400/250'} 
                           alt="Trashed Preview" 
                           class="trash-thumb"
                         />
-                        
-                        <!-- Overlay with Restore button -->
                         <div class="trash-overlay">
                           <button class="restore-btn" on:click={() => restoreImage(filePath)}>
-                            Keep Image
+                            Keep Instead
                           </button>
                         </div>
-
                         <div class="trash-card-info">
-                          <span class="trash-filename">
-                            {filePath.split('/').pop()}
-                          </span>
+                          <span class="trash-filename">{filePath.split('/').pop()}</span>
                         </div>
                       </div>
                     {/each}
                   </div>
                 {/if}
-              {:else}
+
+              {:else if reviewFilter === 'keep'}
                 {#if keepList.size === 0}
                   <div class="empty-trash-message">
                     No images marked to keep. All images will be trashed!
@@ -1034,24 +1055,46 @@
                   <div class="trash-grid">
                     {#each Array.from(keepList) as filePath}
                       <div class="trash-card keep-border">
-                        <!-- Render the cached preview Blob URL -->
                         <img 
                           src={summaryPreviews[filePath] || 'https://picsum.photos/400/250'} 
                           alt="Kept Preview" 
                           class="trash-thumb"
                         />
-                        
-                        <!-- Overlay with Demote button -->
                         <div class="trash-overlay">
                           <button class="demote-btn" on:click={() => demoteImageToTrash(filePath)}>
                             Move to Trash
                           </button>
                         </div>
-
                         <div class="trash-card-info">
-                          <span class="trash-filename">
-                            {filePath.split('/').pop()}
-                          </span>
+                          <span class="trash-filename">{filePath.split('/').pop()}</span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+              {:else}
+                <!-- Star tab -->
+                {#if starList.size === 0}
+                  <div class="empty-trash-message">
+                    No images starred. Use ↑ while culling to mark favorites.
+                  </div>
+                {:else}
+                  <div class="trash-grid">
+                    {#each Array.from(starList) as filePath}
+                      <div class="trash-card star-border">
+                        <img 
+                          src={summaryPreviews[filePath] || 'https://picsum.photos/400/250'} 
+                          alt="Starred Preview" 
+                          class="trash-thumb"
+                        />
+                        <div class="trash-overlay">
+                          <button class="unstar-btn" on:click={() => unstarImage(filePath)}>
+                            Remove Star
+                          </button>
+                        </div>
+                        <div class="trash-card-info">
+                          <span class="trash-filename">★ {filePath.split('/').pop()}</span>
                         </div>
                       </div>
                     {/each}
@@ -1066,7 +1109,7 @@
           <div class="summary-actions-bar">
             <button class="back-btn" on:click={() => state = 'culling'}>Go Back & Review</button>
             <button class="glow-btn confirm-btn" on:click={confirmCulling}>
-              Apply Culling Actions ({trashList.size} to Trash)
+              Apply — {keepList.size} keep · {starList.size} star · {trashList.size} trash
             </button>
           </div>
         </div>
@@ -1077,7 +1120,10 @@
           <div class="success-icon">✓</div>
           <h1 class="complete-heading">All Actions Applied!</h1>
           <p class="complete-desc">
-            Your culling session is complete. Selected photos were moved to `/Selected_to_Edit` and the trash list to `/.trash`.
+            Your culling session is complete.<br/>
+            Kept photos → <code>/Selected_to_Edit</code><br/>
+            Starred photos → <code>/Starred</code><br/>
+            Trashed photos → OS Recycle Bin (recoverable)
           </p>
           <div class="complete-buttons">
             <button class="glow-btn" on:click={startNewSession}>Cull Another Folder</button>
@@ -1125,6 +1171,22 @@
     height: 20px;
     background: hsl(var(--border-muted));
     margin: 0 4px;
+  }
+
+  .brand-version {
+    font-size: 10px;
+    font-weight: 500;
+    color: hsl(var(--text-muted));
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.05em;
+  }
+
+  .welcome-version {
+    font-size: 13px;
+    font-weight: 500;
+    color: hsl(var(--text-muted));
+    margin-left: 6px;
   }
 
   /* Keyboard shortcut legends */
@@ -1327,6 +1389,73 @@
   .restore-btn:hover {
     transform: scale(1.05);
     background: #10b981;
+  }
+
+  .demote-btn {
+    background: hsl(var(--accent-trash));
+    color: #fff;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.3);
+    transition: all 0.15s ease;
+  }
+
+  .demote-btn:hover {
+    transform: scale(1.05);
+    background: #dc2626;
+  }
+
+  .unstar-btn {
+    background: hsl(var(--accent-star));
+    color: #000;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3);
+    transition: all 0.15s ease;
+  }
+
+  .unstar-btn:hover {
+    transform: scale(1.05);
+    filter: brightness(1.1);
+  }
+
+  .keep-border {
+    border: 2px solid hsl(var(--accent-keep) / 0.5);
+  }
+
+  .star-border {
+    border: 2px solid hsl(var(--accent-star) / 0.5);
+  }
+
+  /* Active summary tab highlights */
+  .stat-tab {
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+    border-radius: 8px;
+  }
+
+  .stat-tab:hover {
+    background: hsl(var(--bg-input) / 0.5);
+  }
+
+  .active-tab.keep {
+    border-color: hsl(var(--accent-keep) / 0.5);
+    background: hsl(var(--accent-keep) / 0.08);
+  }
+
+  .active-tab.trash {
+    border-color: hsl(var(--accent-trash) / 0.5);
+    background: hsl(var(--accent-trash) / 0.08);
+  }
+
+  .active-tab.star {
+    border-color: hsl(var(--accent-star) / 0.5);
+    background: hsl(var(--accent-star) / 0.08);
   }
 
   .trash-card-info {
