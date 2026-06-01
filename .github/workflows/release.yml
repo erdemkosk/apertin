@@ -57,32 +57,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Check macOS signing secrets
-        if: matrix.platform == 'macos-latest'
-        id: signing
-        run: |
-          if [ -n "$CERT" ] && [ ${#CERT} -gt 100 ]; then
-            echo "enabled=true" >> $GITHUB_OUTPUT
-          else
-            echo "enabled=false" >> $GITHUB_OUTPUT
-          fi
-        shell: bash
-        env:
-          CERT: ${{ secrets.APPLE_CERTIFICATE }}
-
       - name: Build & publish Tauri release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          # ── macOS code-signing (only active when secrets are properly configured) ──
-          # To enable: add these 6 secrets to repo Settings → Secrets → Actions.
-          # Until then builds are unsigned (users right-click → Open on first launch).
-          APPLE_CERTIFICATE:          ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE          || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY:     ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_SIGNING_IDENTITY     || '' }}
-          APPLE_ID:                   ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_ID                   || '' }}
-          APPLE_PASSWORD:             ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_PASSWORD             || '' }}
-          APPLE_TEAM_ID:              ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_TEAM_ID             || '' }}
+          # ── macOS code-signing ─────────────────────────────────────────────
+          # Signing is DISABLED until proper Apple Developer certs are ready.
+          # To enable: uncomment the lines below and add the 6 secrets in
+          # repo Settings → Secrets → Actions.
+          #
+          # APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
 
         with:
           # build-${{ github.run_number }} suffix ensures every master merge
