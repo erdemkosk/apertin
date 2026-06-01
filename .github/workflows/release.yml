@@ -1,0 +1,97 @@
+name: Build & Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  release:
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS – Universal binary (Apple Silicon + Intel)
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+
+          # Linux
+          - platform: ubuntu-22.04
+            args: ''
+
+          # Windows
+          - platform: windows-latest
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Universal macOS build needs both targets
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build & publish Tauri release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # DEPLOY_TOKEN is a GitHub PAT (or fine-grained token) with
+          # Contents: write  — used to create the GitHub Release.
+          GITHUB_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+
+          # ── macOS code-signing & notarization ──────────────────────────────
+          # APPLE_CERTIFICATE     : base64-encoded .p12 Developer ID certificate
+          # APPLE_CERTIFICATE_PASSWORD : password for the .p12
+          # APPLE_SIGNING_IDENTITY : "Developer ID Application: Name (TEAMID)"
+          # APPLE_ID              : Apple ID e-mail used for notarytool
+          # APPLE_PASSWORD        : app-specific password for the Apple ID
+          # APPLE_TEAM_ID         : 10-character Team ID
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+        with:
+          tagName: v__VERSION__
+          releaseName: Apertinder v__VERSION__
+          releaseBody: |
+            ## Apertinder v__VERSION__
+
+            ### Download
+            | Platform | File |
+            |----------|------|
+            | macOS (Universal) | `.dmg` |
+            | Windows | `.msi` / `.exe` |
+            | Linux | `.deb` / `.AppImage` |
+
+            Select the correct installer for your OS from the **Assets** list below.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

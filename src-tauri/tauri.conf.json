@@ -1,0 +1,63 @@
+{
+  "productName": "Apertinder",
+  "version": "0.1.0",
+  "identifier": "com.apertinder.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Apertinder - RAW Culler",
+        "width": 1280,
+        "height": 850,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["arw", "nef", "cr2", "cr3", "raf", "dng"],
+        "name": "RAW Image",
+        "description": "RAW Camera Image",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["jpg", "jpeg"],
+        "name": "JPEG Image",
+        "description": "JPEG Camera Image",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["png"],
+        "name": "PNG Image",
+        "description": "PNG Image",
+        "role": "Viewer"
+      }
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.plist",
+      "exceptionDomain": null,
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    }
+  }
+}

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Required for WKWebView (Tauri's rendering engine) to work under
+    Hardened Runtime — without this, the webview cannot JIT-compile JS.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!--
+    Grants read/write access to files the user explicitly selects via
+    the native open/save panel (rfd::FileDialog). No broad disk access
+    is requested; the app only touches paths the user hands it.
+  -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!--
+    Needed to resolve symlinks and follow aliases inside user-chosen
+    directories (e.g. Photos library packages, external drive aliases).
+  -->
+  <key>com.apple.security.files.bookmarks.document-scope</key>
+  <true/>
+</dict>
+</plist>
