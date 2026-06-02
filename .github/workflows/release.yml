@@ -80,9 +80,9 @@ jobs:
           # build-${{ github.run_number }} suffix ensures every master merge
           # creates a unique tag — no version bump required between pushes.
           tagName: v__VERSION__-build.${{ github.run_number }}
-          releaseName: Apertinder v__VERSION__ (build ${{ github.run_number }})
+          releaseName: Apertin v__VERSION__ (build ${{ github.run_number }})
           releaseBody: |
-            ## Apertinder v__VERSION__ — build ${{ github.run_number }}
+            ## Apertin v__VERSION__ — build ${{ github.run_number }}
 
             **Commit:** ${{ github.sha }}
             **Branch:** ${{ github.ref_name }}

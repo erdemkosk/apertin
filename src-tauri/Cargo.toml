@@ -1,7 +1,7 @@
 [package]
-name = "apertinder"
+name = "apertin"
 version = "0.1.0"
-description = "Apertinder RAW Culling Engine"
+description = "Apertin RAW Culling Engine"
 authors = ["Antigravity Developer"]
 edition = "2021"
 

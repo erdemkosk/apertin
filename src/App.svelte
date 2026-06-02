@@ -24,7 +24,7 @@
 
   // App States
   let state = 'welcome'; // 'welcome' | 'culling' | 'summary' | 'complete'
-  let mode = 'gallery'; // 'gallery' | 'tinder' (active culling)
+  let mode = 'gallery'; // 'gallery' | 'swipe' (active culling)
   let dirPath = '';
   let files = [];
   let currentIndex = 0;
@@ -383,7 +383,7 @@
     }
   }
 
-  // Culling Operations (Tinder Mode)
+  // Culling Operations (Swipe Mode)
   function keepImage() {
     if (animating) return;
     swipeState = 'keep';
@@ -465,7 +465,7 @@
 
   // Handle mode switches
   function toggleMode() {
-    mode = mode === 'gallery' ? 'tinder' : 'gallery';
+    mode = mode === 'gallery' ? 'swipe' : 'gallery';
     isZoomed = false;
   }
 
@@ -500,7 +500,7 @@
       e.preventDefault();
     }
 
-    if (mode === 'tinder') {
+    if (mode === 'swipe') {
       if (e.key === 'ArrowRight') {
         keepImage();
       } else if (e.key === 'ArrowLeft') {
@@ -752,7 +752,7 @@
     <aside class="sidebar glass-panel">
       <div class="brand">
         <span class="brand-gradient">
-          <span style="color: hsl(var(--text-primary))">Aper</span><span style="color: hsl(var(--accent-amber))">tinder</span>
+          <span style="color: hsl(var(--text-primary))">Aper</span><span style="color: hsl(var(--accent-amber))">tin</span>
           <span class="brand-version">v{appVersion}</span>
         </span>
         <div class="brand-sub">Developed with ❤️ by Mustafa Erdem Köşk</div>
@@ -884,7 +884,7 @@
     <!-- Top Action Header -->
     <header class="top-bar glass-panel">
       {#if state === 'welcome'}
-        <div class="top-title">Welcome to Apertinder</div>
+        <div class="top-title">Welcome to Apertin</div>
       {:else if state === 'culling'}
         <div class="top-title breadcrumb">
           <span class="folder-path">{dirPath}</span>
@@ -901,10 +901,10 @@
             👁️ Browse Mode
           </button>
           <button 
-            class="mode-btn {mode === 'tinder' ? 'active' : ''}" 
-            on:click={() => mode = 'tinder'}
+            class="mode-btn {mode === 'swipe' ? 'active' : ''}" 
+            on:click={() => mode = 'swipe'}
           >
-            🔥 Tinder Sieve
+            🔥 Swipe Mode
           </button>
           <div class="vertical-divider"></div>
           <button class="new-session-btn" on:click={startNewSession}>Reset Folder</button>
@@ -924,10 +924,10 @@
       {#if state === 'welcome'}
         <div class="welcome-container glass-panel">
           <div class="welcome-logo-container">
-            <img src={logo} alt="Apertinder Logo" class="welcome-logo-img" />
+            <img src={logo} alt="Apertin Logo" class="welcome-logo-img" />
           </div>
           <h1 class="welcome-heading">
-            <span class="wordmark-apt">Aper</span><span class="wordmark-tinder">tinder</span>
+            <span class="wordmark-apt">Aper</span><span class="wordmark-tin">tin</span>
           </h1>
           <p class="welcome-tagline">RAW Image Culler <span class="welcome-version">v{appVersion}</span></p>
           <p class="welcome-desc">
@@ -1007,11 +1007,11 @@
       {:else if state === 'culling'}
         <div class="culler-container">
           
-          <!-- Tinder Sieve Deck -->
+          <!-- Swipe Mode Deck -->
           <div class="deck-area">
             
             <div class="card-stack {mode}">
-              {#if mode === 'tinder'}
+              {#if mode === 'swipe'}
                 <!-- Physical photo stack background layers -->
                 {#if files.length - currentIndex > 2}
                   <div class="card-underlay under-2"></div>
@@ -1025,8 +1025,8 @@
                 class="image-card glass-panel {swipeState} {mode}"
                 style="animation: {swipeState === 'keep' ? 'swipe-right-out 0.45s forwards' : swipeState === 'trash' ? 'swipe-left-out 0.45s forwards' : swipeState === 'star' ? 'swipe-up-out 0.35s forwards' : 'none'}"
               >
-                <!-- Indicator overlays (Tinder Mode only) -->
-                {#if mode === 'tinder'}
+                <!-- Indicator overlays (Swipe Mode only) -->
+                {#if mode === 'swipe'}
                   <div class="swipe-overlay keep {swipeState === 'keep' ? 'show' : ''}">KEEP</div>
                   <div class="swipe-overlay trash {swipeState === 'trash' ? 'show' : ''}">TRASH</div>
                   <div class="swipe-overlay star {swipeState === 'star' ? 'show' : ''}">STARRED</div>
@@ -1075,7 +1075,7 @@
             <div class="keyboard-helper-dock glass-panel">
               <div class="dock-key-item">
                 <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd>
-                <span class="dock-key-label">{mode === 'tinder' ? 'Trash' : 'Prev'}</span>
+                <span class="dock-key-label">{mode === 'swipe' ? 'Trash' : 'Prev'}</span>
               </div>
               <div class="dock-key-item">
                 <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd>
@@ -1083,7 +1083,7 @@
               </div>
               <div class="dock-key-item">
                 <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd>
-                <span class="dock-key-label">{mode === 'tinder' ? 'Keep' : 'Next'}</span>
+                <span class="dock-key-label">{mode === 'swipe' ? 'Keep' : 'Next'}</span>
               </div>
               <div class="dock-key-item">
                 <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd>
@@ -2002,7 +2002,7 @@
     }
   }
 
-  /* Apertinder wordmark — split color, no gradient */
+  /* Apertin wordmark — split color, no gradient */
   .welcome-heading {
     font-family: var(--font-display);
     font-size: 36px;
@@ -2016,7 +2016,7 @@
     color: hsl(var(--text-primary));
   }
 
-  .wordmark-tinder {
+  .wordmark-tin {
     color: hsl(var(--accent-amber));
   }
 

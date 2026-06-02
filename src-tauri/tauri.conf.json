@@ -1,7 +1,7 @@
 {
-  "productName": "Apertinder",
+  "productName": "Apertin",
   "version": "0.1.0",
-  "identifier": "com.apertinder.app",
+  "identifier": "com.apertin.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Apertinder - RAW Culler",
+        "title": "Apertin - RAW Culler",
         "width": 1280,
         "height": 850,
         "resizable": true,

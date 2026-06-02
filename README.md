@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="src/logo.png" width="96" alt="Apertinder Logo" />
+<img src="src/logo.png" width="96" alt="Apertin Logo" />
 
-# Apertinder
+# Apertin
 
 **Ultra-fast, zero-cloud RAW image culler for photographers who shoot thousands.**
 
@@ -18,11 +18,11 @@
 
 ---
 
-## ✦ What is Apertinder?
+## ✦ What is Apertin?
 
-Apertinder is a **local-first, blazing-fast RAW image culling app** built for photographers who come back from a shoot with 400+ RAW files and need to triage them in minutes — not hours.
+Apertin is a **local-first, blazing-fast RAW image culling app** built for photographers who come back from a shoot with 400+ RAW files and need to triage them in minutes — not hours.
 
-It works like Tinder for your photos. Swipe right to keep, left to trash. Every operation runs entirely on your machine — **no cloud uploads, no subscriptions, no waiting**.
+It works like a card-swipe workflow for your photos. Swipe right to keep, left to trash. Every operation runs entirely on your machine — **no cloud uploads, no subscriptions, no waiting**.
 
 The core engine is written in **Rust** and uses memory-mapped file I/O to extract embedded JPEG previews directly from RAW files at native speed. Your full-resolution RAW files never have to be decoded during culling.
 
@@ -33,21 +33,21 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | Feature | Details |
 |---|---|
 | 🚀 **Zero-decode preview extraction** | Reads the embedded JPEG directly from RAW binary — no full decode needed |
-| 🎴 **Tinder Sieve Mode** | Keyboard-driven keep/trash workflow with animated card transitions |
+| 🔥 **Swipe Mode** | Keyboard-driven keep/trash workflow with animated card transitions |
 | 👁️ **Browse Mode** | Classic gallery browser with instant prev/next navigation |
 | 🔍 **Focus Check Zoom** | Press `Space` to enter pixel-level zoom mode across all images |
 | ⭐ **Star Rating** | Mark hero shots with `↑` for selective editing |
 | 📊 **EXIF Sidebar** | Camera, lens, shutter, aperture, ISO, focal length at a glance |
-| 🗂️ **macOS "Open With"** | Right-click any folder in Finder → Open With → Apertinder |
+| 🗂️ **macOS "Open With"** | Right-click any folder in Finder → Open With → Apertin |
 | 🖱️ **Drag & Drop** | Drag a folder onto the app window to start instantly |
-| 🗑️ **Non-destructive trash** | Trashed files go to `.trash/` subfolder — never permanently deleted |
+| 🗑️ **OS Trash** | Trashed files go to your system recycle bin |
 | ✅ **Selected_to_Edit export** | Kept files moved to `Selected_to_Edit/` ready for Lightroom/Capture One |
 | 🌑 **Dark mode only** | Premium dark UI — built for low-light post-production environments |
 | 🔒 **Fully local** | Zero network requests, zero telemetry, zero cloud |
 
 ---
 
-## 📸 Supported RAW Formats
+## 📸 Supported Formats
 
 | Format | Camera Brand |
 |---|---|
@@ -56,6 +56,8 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | `.NEF` | Nikon |
 | `.RAF` | Fujifilm |
 | `.DNG` | Adobe / Leica / DJI |
+| `.JPG` / `.JPEG` | Any camera |
+| `.PNG` | Any source |
 
 ---
 
@@ -68,10 +70,10 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 ⚡ Rust scans directory & extracts embedded previews (parallel, memory-mapped)
     │
     ▼
-🃏 Tinder Sieve Mode
+🔥 Swipe Mode
     ├── → Keep    (moves to Selected_to_Edit/)
-    ├── ← Trash   (moves to .trash/)
-    └── ↑ Star    (marks as hero shot)
+    ├── ← Trash   (sent to OS recycle bin)
+    └── ↑ Star    (moves to Starred/)
     │
     ▼
 📋 Review Decisions
@@ -87,7 +89,7 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 
 ## ⌨️ Keyboard Shortcuts
 
-### Tinder Sieve Mode
+### Swipe Mode
 | Key | Action |
 |---|---|
 | `→` | Keep image |
@@ -107,7 +109,7 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 
 ## 🏗️ Architecture
 
-Apertinder is built on a **Rust + Svelte + Tauri** stack. The separation of concerns is clean:
+Apertin is built on a **Rust + Svelte + Tauri** stack. The separation of concerns is clean:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -154,8 +156,8 @@ xcode-select --install
 ### Clone & Run
 
 ```bash
-git clone https://github.com/mek/apertinder.git
-cd apertinder
+git clone https://github.com/mek/apertin.git
+cd apertin
 
 npm install
 npm run tauri dev
@@ -174,7 +176,7 @@ The `.dmg` / `.app` bundle will appear in `src-tauri/target/release/bundle/`.
 ## 📂 Project Structure
 
 ```
-apertinder/
+apertin/
 ├── src/                    # Svelte frontend
 │   ├── App.svelte          # Main application component
 │   ├── global.css          # Design system (HSL tokens, glassmorphism)
@@ -197,7 +199,7 @@ apertinder/
 
 ## 🎨 Design Philosophy
 
-Apertinder's UI is built around a single principle: **the photo should fill your vision, not the interface**.
+Apertin's UI is built around a single principle: **the photo should fill your vision, not the interface**.
 
 - **Dark-first**: Deep volcanic slate backgrounds (#07090e) chosen to match how photographers work in dimmed rooms
 - **Glassmorphism panels**: Sidebar and EXIF strip use `backdrop-filter: blur()` so they feel like HUD overlays, not UI chrome
@@ -258,7 +260,7 @@ MIT © Mustafa Erdem Köşk
 
 <div align="center">
 
-**If Apertinder saved you an hour of culling, give it a ⭐**
+**If Apertin saved you an hour of culling, give it a ⭐**
 
 *Built for photographers, by a photographer.*
 

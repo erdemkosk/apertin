@@ -27,7 +27,7 @@ struct SessionData {
     current_index: usize,
 }
 
-const SESSION_FILE: &str = ".apertinder_session.json";
+const SESSION_FILE: &str = ".apertin_session.json";
 
 #[tauri::command]
 fn save_session(
