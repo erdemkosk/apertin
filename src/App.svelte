@@ -22,6 +22,40 @@
     });
   } catch (_) {}
 
+  // ── Update checker ────────────────────────────────────────────────────────
+  const GITHUB_REPO = 'erdemkosk/apertinder';
+  let updateAvailable = false;
+  let latestVersion = '';
+  let updateCheckDone = false;
+  let checkingUpdate = false;
+  let updateReleaseUrl = '';
+
+  async function checkForUpdates(silent = true) {
+    if (checkingUpdate) return;
+    checkingUpdate = true;
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+        { headers: { Accept: 'application/vnd.github+json' } }
+      );
+      if (!res.ok) throw new Error('network');
+      const data = await res.json();
+      // tag_name is like "v0.1.0-build.12" — extract semver prefix
+      const match = data.tag_name?.match(/^v?(\d+\.\d+\.\d+)/);
+      if (match) {
+        latestVersion = match[1];
+        updateReleaseUrl = data.html_url ?? '';
+        const current = appVersion.replace(/[^\d.]/g, '');
+        updateAvailable = latestVersion !== current && latestVersion > current;
+      }
+    } catch (_) {
+      if (!silent) alert('Güncelleme kontrolü başarısız. İnternet bağlantınızı kontrol edin.');
+    } finally {
+      checkingUpdate = false;
+      updateCheckDone = true;
+    }
+  }
+
   // App States
   let state = 'welcome'; // 'welcome' | 'culling' | 'summary' | 'complete'
   let mode = 'gallery'; // 'gallery' | 'swipe' (active culling)
@@ -137,9 +171,10 @@
     try {
       const { listen } = await import('@tauri-apps/api/event');
       if (groupUnlistener) groupUnlistener();
+      // Only update the progress counter — never touch groupAssignments here
+      // to avoid re-rendering the entire file list on every event.
       groupUnlistener = await listen('group-progress', (ev) => {
         groupProgress = { processed: ev.payload.processed, total: ev.payload.total };
-        groupAssignments = ev.payload.assignments;
       });
     } catch (_) {}
 
@@ -149,6 +184,7 @@
           filePaths: files.map(f => f.file_path),
           threshold: visualThreshold,
         });
+        // Single assignment update — one re-render at the very end
         groupAssignments = final;
       }
     } catch (e) {
@@ -712,6 +748,9 @@
     window.focus();
     document.addEventListener('click', () => window.focus(), { passive: true });
 
+    // Check for updates silently after a short delay
+    setTimeout(() => checkForUpdates(true), 4000);
+
     // Check if app was launched with a folder argument (e.g. macOS "Open With")
     if (invoke) {
       try {
@@ -754,8 +793,27 @@
         <span class="brand-gradient">
           <span style="color: hsl(var(--text-primary))">Aper</span><span style="color: hsl(var(--accent-amber))">tin</span>
           <span class="brand-version">v{appVersion}</span>
+          {#if updateAvailable}
+            <span class="update-badge" title="Yeni sürüm: v{latestVersion}">● Güncelleme var</span>
+          {/if}
         </span>
-        <div class="brand-sub">Developed with ❤️ by Mustafa Erdem Köşk</div>
+        <div class="brand-sub">
+          Developed with ❤️ by Mustafa Erdem Köşk
+          {#if updateAvailable}
+            <a class="update-link" href={updateReleaseUrl} target="_blank" rel="noreferrer">
+              v{latestVersion} indir →
+            </a>
+          {:else}
+            <button
+              class="update-check-btn"
+              on:click={() => checkForUpdates(false)}
+              disabled={checkingUpdate}
+              title="Güncelleme kontrol et"
+            >
+              {checkingUpdate ? '⏳' : updateCheckDone ? '✓ Güncel' : '↻ Güncelle?'}
+            </button>
+          {/if}
+        </div>
       </div>
 
       <!-- Culling Progress bar -->
@@ -1480,6 +1538,46 @@
     vertical-align: middle;
     letter-spacing: 0.05em;
   }
+
+  .update-badge {
+    font-size: 9px;
+    font-weight: 600;
+    color: hsl(var(--accent-amber));
+    margin-left: 6px;
+    vertical-align: middle;
+    animation: pulse-badge 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .update-link {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: hsl(var(--accent-amber));
+    text-decoration: none;
+    padding: 1px 6px;
+    border: 1px solid hsl(var(--accent-amber) / 0.5);
+    border-radius: 4px;
+  }
+  .update-link:hover { background: hsl(var(--accent-amber) / 0.15); }
+
+  .update-check-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    color: hsl(var(--text-muted));
+    padding: 0;
+    margin-left: 6px;
+    transition: color 0.2s;
+  }
+  .update-check-btn:hover:not(:disabled) { color: hsl(var(--accent-amber)); }
+  .update-check-btn:disabled { opacity: 0.5; cursor: default; }
 
   .welcome-version {
     font-size: 13px;

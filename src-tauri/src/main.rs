@@ -74,7 +74,6 @@ fn hamming(a: u64, b: u64) -> u32 {
 struct GroupProgress {
     processed: usize,
     total: usize,
-    assignments: Vec<Option<usize>>,
 }
 
 /// Reads a JPEG from the first 2 MB of a file (fast thumbnail, sufficient for dHash).
@@ -90,60 +89,58 @@ fn dhash_for_file(file_path: &str) -> Option<u64> {
 
 /// Visual-similarity grouping using dHash with **chain-linking**.
 ///
-/// Chain-linking: a file joins a group when its hash is within `threshold`
-/// of *any* existing member (not just the first). This correctly handles
-/// scenes where consecutive shots drift gradually.
+/// Runs in a blocking thread so the async runtime stays free and the UI
+/// never freezes. Progress events carry only the counter (not the full
+/// assignments array) so the frontend doesn't re-render the list repeatedly.
 ///
 /// `threshold` — caller-controlled Hamming distance (0-64):
 ///   8  = strict   (near-identical, burst shots only)
 ///  15  = normal   (same scene, varying exposure)
 ///  22  = loose    (similar subject, different framing)
 #[tauri::command]
-fn analyze_groups(
+async fn analyze_groups(
     app: tauri::AppHandle,
     file_paths: Vec<String>,
     threshold: u32,
 ) -> Result<Vec<Option<usize>>, String> {
-    let threshold = threshold.min(64);
-    let total = file_paths.len();
-    let mut assignments: Vec<Option<usize>> = vec![None; total];
-    // All hashes per group for chain-linking
-    let mut group_members: Vec<Vec<u64>> = Vec::new();
-    let mut next_group_id: usize = 0;
+    tauri::async_runtime::spawn_blocking(move || {
+        let threshold = threshold.min(64);
+        let total = file_paths.len();
+        let mut assignments: Vec<Option<usize>> = vec![None; total];
+        let mut group_members: Vec<Vec<u64>> = Vec::new();
+        let mut next_group_id: usize = 0;
 
-    for (i, path) in file_paths.iter().enumerate() {
-        if let Some(hash) = dhash_for_file(path) {
-            let matched = group_members
-                .iter()
-                .enumerate()
-                .find(|(_, members)| members.iter().any(|&mh| hamming(hash, mh) <= threshold))
-                .map(|(gid, _)| gid);
+        // Emit at most ~20 progress events regardless of file count
+        let step = (total / 20).max(5);
 
-            if let Some(gid) = matched {
-                assignments[i] = Some(gid);
-                group_members[gid].push(hash);
-            } else {
-                assignments[i] = Some(next_group_id);
-                group_members.push(vec![hash]);
-                next_group_id += 1;
+        for (i, path) in file_paths.iter().enumerate() {
+            if let Some(hash) = dhash_for_file(path) {
+                let matched = group_members
+                    .iter()
+                    .enumerate()
+                    .find(|(_, members)| members.iter().any(|&mh| hamming(hash, mh) <= threshold))
+                    .map(|(gid, _)| gid);
+
+                if let Some(gid) = matched {
+                    assignments[i] = Some(gid);
+                    group_members[gid].push(hash);
+                } else {
+                    assignments[i] = Some(next_group_id);
+                    group_members.push(vec![hash]);
+                    next_group_id += 1;
+                }
+            }
+
+            // Emit lightweight progress (no assignments clone) at throttled intervals
+            if (i + 1) % step == 0 || i + 1 == total {
+                app.emit("group-progress", GroupProgress { processed: i + 1, total }).ok();
             }
         }
 
-        // Emit progress every 5 files and on the final file
-        if (i + 1) % 5 == 0 || i + 1 == total {
-            app.emit(
-                "group-progress",
-                GroupProgress {
-                    processed: i + 1,
-                    total,
-                    assignments: assignments.clone(),
-                },
-            )
-            .ok();
-        }
-    }
-
-    Ok(assignments)
+        Ok(assignments)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
 }
 
 // ── File scanning ──────────────────────────────────────────────────────────
