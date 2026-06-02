@@ -66,56 +66,91 @@
 
   // ── Similarity grouping ───────────────────────────────────────────────────
 
-  // Parallel array to `files`: group id per file (null = not yet analysed / unique)
-  let groupAssignments = []; // number | null  per index
+  let groupAssignments = [];   // number|null per file index
   let groupAnalyzing = false;
   let groupProgress = { processed: 0, total: 0 };
-  let groupUnlistener = null; // cleanup fn for the event listener
+  let groupUnlistener = null;
+  // 'time' | 'visual'
+  let groupMode = 'time';
+  // Time gap presets (seconds)
+  const TIME_GAPS = [{ label: '30s', value: 30 }, { label: '2 min', value: 120 }, { label: '5 min', value: 300 }];
+  let timeGap = 120;
+  // Visual similarity threshold presets (Hamming, 0-64)
+  const THRESHOLDS = [{ label: 'Strict', value: 8 }, { label: 'Normal', value: 15 }, { label: 'Loose', value: 22 }];
+  let visualThreshold = 15;
 
-  // Derived: how many files share each group id (groups of 1 = unique, hide header)
   $: groupSizes = (() => {
-    const sizes = {};
+    const s = {};
     for (const gid of groupAssignments) {
-      if (gid != null) sizes[gid] = (sizes[gid] || 0) + 1;
+      if (gid != null) s[gid] = (s[gid] || 0) + 1;
     }
-    return sizes;
+    return s;
   })();
 
-  // 12 distinct accent colors for group highlights
   const GROUP_COLORS = [
     '#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444',
     '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
     '#6366f1','#a78bfa',
   ];
-
   function groupColor(gid) {
-    if (gid == null) return 'transparent';
-    return GROUP_COLORS[gid % GROUP_COLORS.length];
+    return gid == null ? 'transparent' : GROUP_COLORS[gid % GROUP_COLORS.length];
   }
 
-  async function analyzeGroups() {
-    if (!invoke || files.length === 0 || groupAnalyzing) return;
+  // Parse EXIF date "2026:06:02 12:30:15" → ms timestamp (or null)
+  function parseExifDate(str) {
+    if (!str) return null;
+    const iso = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+    const t = Date.parse(iso);
+    return isNaN(t) ? null : t;
+  }
 
+  // Instant time-based grouping (pure JS, no Rust call)
+  function groupByTime(gapSec) {
+    const gapMs = gapSec * 1000;
+    const assignments = new Array(files.length).fill(null);
+    const indexed = files.map((f, i) => ({ i, t: parseExifDate(f.date_time) }))
+                         .filter(x => x.t != null)
+                         .sort((a, b) => a.t - b.t);
+
+    let gid = 0, lastT = null;
+    for (const { i, t } of indexed) {
+      if (lastT == null || t - lastT > gapMs) { gid++; }
+      assignments[i] = gid;
+      lastT = t;
+    }
+    return assignments;
+  }
+
+  async function runGrouping() {
+    if (files.length === 0 || groupAnalyzing) return;
+
+    if (groupMode === 'time') {
+      groupAssignments = groupByTime(timeGap);
+      return;
+    }
+
+    // Visual mode — call Rust, progressive events
     groupAnalyzing = true;
     groupProgress = { processed: 0, total: files.length };
     groupAssignments = new Array(files.length).fill(null);
 
-    // Subscribe to incremental progress events from Rust
     try {
       const { listen } = await import('@tauri-apps/api/event');
       if (groupUnlistener) groupUnlistener();
-      groupUnlistener = await listen('group-progress', (event) => {
-        const { processed, total, assignments } = event.payload;
-        groupProgress = { processed, total };
-        groupAssignments = assignments;
+      groupUnlistener = await listen('group-progress', (ev) => {
+        groupProgress = { processed: ev.payload.processed, total: ev.payload.total };
+        groupAssignments = ev.payload.assignments;
       });
     } catch (_) {}
 
     try {
-      const finalAssignments = await invoke('analyze_groups', {
-        filePaths: files.map(f => f.file_path),
-      });
-      groupAssignments = finalAssignments;
+      if (invoke) {
+        const final = await invoke('analyze_groups', {
+          filePaths: files.map(f => f.file_path),
+          threshold: visualThreshold,
+        });
+        groupAssignments = final;
+      }
     } catch (e) {
       console.error('Group analysis failed:', e);
     } finally {
@@ -750,26 +785,44 @@
         </div>
       </div>
 
-      <!-- Similarity grouping -->
-      <div class="group-analysis-row">
-        <button
-          class="group-btn {groupAnalyzing ? 'analyzing' : ''}"
-          on:click={analyzeGroups}
-          disabled={groupAnalyzing || files.length === 0}
-          title="Analyses visual similarity using dHash and groups similar-looking photos"
-        >
+      <!-- Grouping panel -->
+      <div class="group-panel">
+        <div class="group-mode-row">
+          <button class="gmode-btn {groupMode === 'time' ? 'active' : ''}"
+                  on:click={() => { groupMode = 'time'; }}>⏱ Time</button>
+          <button class="gmode-btn {groupMode === 'visual' ? 'active' : ''}"
+                  on:click={() => { groupMode = 'visual'; }}>⬡ Visual</button>
+        </div>
+        {#if groupMode === 'time'}
+          <div class="group-opts-row">
+            {#each TIME_GAPS as g}
+              <button class="opt-chip {timeGap === g.value ? 'active' : ''}"
+                      on:click={() => timeGap = g.value}>{g.label}</button>
+            {/each}
+          </div>
+        {:else}
+          <div class="group-opts-row">
+            {#each THRESHOLDS as t}
+              <button class="opt-chip {visualThreshold === t.value ? 'active' : ''}"
+                      on:click={() => visualThreshold = t.value}>{t.label}</button>
+            {/each}
+          </div>
+        {/if}
+        <button class="group-run-btn {groupAnalyzing ? 'analyzing' : ''}"
+                on:click={runGrouping}
+                disabled={groupAnalyzing || files.length === 0}>
           {#if groupAnalyzing}
             <span class="group-spinner"></span>
             {groupProgress.processed}/{groupProgress.total}
           {:else if groupAssignments.length > 0}
-            ⟳ Re-group Similar
+            ⟳ Re-group
           {:else}
-            ⬡ Group Similar Photos
+            Group Photos
           {/if}
         </button>
         {#if groupAssignments.length > 0 && !groupAnalyzing}
-          <span class="group-summary">
-            {Object.values(groupSizes).filter(s => s > 1).length} groups found
+          <span class="group-result-label">
+            {Object.values(groupSizes).filter(s => s > 1).length} groups · {Object.values(groupSizes).filter(s => s > 1).reduce((a, b) => a + b, 0)} photos
           </span>
         {/if}
       </div>
@@ -1274,23 +1327,83 @@
   }
 
   /* ── Similarity grouping ─────────────────────────────────────────────── */
-  .group-analysis-row {
+  .group-panel {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 0 8px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 0 10px;
     border-bottom: 1px solid hsl(var(--border-muted));
     margin-bottom: 6px;
   }
 
-  .group-btn {
+  .group-mode-row {
+    display: flex;
+    gap: 4px;
+  }
+
+  .gmode-btn {
     flex: 1;
+    background: hsl(var(--bg-input) / 0.5);
+    border: 1px solid hsl(var(--border-muted));
+    color: hsl(var(--text-secondary));
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 6px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    letter-spacing: 0.03em;
+  }
+
+  .gmode-btn.active {
+    background: hsl(var(--accent-amber) / 0.15);
+    color: hsl(var(--accent-amber));
+    border-color: hsl(var(--accent-amber) / 0.5);
+  }
+
+  .gmode-btn:hover:not(.active) {
+    background: hsl(var(--bg-input));
+    color: hsl(var(--text-primary));
+  }
+
+  .group-opts-row {
+    display: flex;
+    gap: 4px;
+  }
+
+  .opt-chip {
+    flex: 1;
+    background: transparent;
+    border: 1px solid hsl(var(--border-muted));
+    color: hsl(var(--text-muted));
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    text-align: center;
+  }
+
+  .opt-chip.active {
+    border-color: hsl(var(--accent-amber) / 0.6);
+    color: hsl(var(--accent-amber));
+    background: hsl(var(--accent-amber) / 0.08);
+  }
+
+  .opt-chip:hover:not(.active) {
+    color: hsl(var(--text-secondary));
+    border-color: hsl(var(--border-muted) / 0.8);
+  }
+
+  .group-run-btn {
+    width: 100%;
     background: hsl(var(--bg-input) / 0.6);
     border: 1px solid hsl(var(--border-muted));
     color: hsl(var(--text-secondary));
     font-size: 11px;
-    font-weight: 600;
-    padding: 5px 10px;
+    font-weight: 700;
+    padding: 6px 10px;
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -1298,24 +1411,20 @@
     justify-content: center;
     gap: 5px;
     transition: all 0.15s ease;
-    letter-spacing: 0.02em;
   }
 
-  .group-btn:hover:not(:disabled) {
+  .group-run-btn:hover:not(:disabled) {
     background: hsl(var(--bg-input));
     color: hsl(var(--text-primary));
     border-color: hsl(var(--accent-amber) / 0.4);
   }
 
-  .group-btn.analyzing {
+  .group-run-btn.analyzing {
     color: hsl(var(--accent-amber));
     border-color: hsl(var(--accent-amber) / 0.4);
   }
 
-  .group-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
+  .group-run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .group-spinner {
     display: inline-block;
@@ -1329,10 +1438,10 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .group-summary {
+  .group-result-label {
     font-size: 10px;
     color: hsl(var(--text-muted));
-    white-space: nowrap;
+    text-align: center;
   }
 
   .group-header {

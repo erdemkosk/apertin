@@ -70,53 +70,61 @@ fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
 
-/// Maximum Hamming distance to consider two photos "similar" (0-64).
-/// 10 ≈ 84% similarity — catches burst shots and same-scene variations.
-const DHASH_THRESHOLD: u32 = 10;
-
 #[derive(Debug, Clone, Serialize)]
 struct GroupProgress {
     processed: usize,
     total: usize,
-    /// Parallel array to file_paths: group id for each file, or null if ungrouped.
     assignments: Vec<Option<usize>>,
 }
 
-/// Reads the largest embedded JPEG preview from a file and computes its dHash.
+/// Reads a JPEG from the first 2 MB of a file (fast thumbnail, sufficient for dHash).
 fn dhash_for_file(file_path: &str) -> Option<u64> {
     let file = File::open(file_path).ok()?;
     let mmap = unsafe { memmap2::MmapOptions::new().map(&file).ok()? };
-    let (offset, length) = parser::scan_for_largest_jpeg(&mmap)?;
+    // Limit to first 2 MB — embedded thumbnails are always near the start
+    let scan_end = mmap.len().min(2 * 1024 * 1024);
+    let (offset, length) = parser::scan_for_largest_jpeg(&mmap[..scan_end])?;
     let jpeg = &mmap[offset as usize..(offset + length) as usize];
     parser::compute_dhash(jpeg)
 }
 
-/// Analyses visual similarity between files using dHash and emits progressive
-/// `group-progress` events so the frontend can update the sidebar in real time.
-/// Returns the final group assignments (index → group id or null).
+/// Visual-similarity grouping using dHash with **chain-linking**.
+///
+/// Chain-linking: a file joins a group when its hash is within `threshold`
+/// of *any* existing member (not just the first). This correctly handles
+/// scenes where consecutive shots drift gradually.
+///
+/// `threshold` — caller-controlled Hamming distance (0-64):
+///   8  = strict   (near-identical, burst shots only)
+///  15  = normal   (same scene, varying exposure)
+///  22  = loose    (similar subject, different framing)
 #[tauri::command]
 fn analyze_groups(
     app: tauri::AppHandle,
     file_paths: Vec<String>,
+    threshold: u32,
 ) -> Result<Vec<Option<usize>>, String> {
+    let threshold = threshold.min(64);
     let total = file_paths.len();
     let mut assignments: Vec<Option<usize>> = vec![None; total];
-    // One representative hash per group (group_id → hash)
-    let mut group_representatives: Vec<(usize, u64)> = Vec::new();
+    // All hashes per group for chain-linking
+    let mut group_members: Vec<Vec<u64>> = Vec::new();
     let mut next_group_id: usize = 0;
 
     for (i, path) in file_paths.iter().enumerate() {
         if let Some(hash) = dhash_for_file(path) {
-            let matched = group_representatives
+            let matched = group_members
                 .iter()
-                .find(|&&(_, gh)| hamming(hash, gh) <= DHASH_THRESHOLD)
-                .map(|&(gid, _)| gid);
+                .enumerate()
+                .find(|(_, members)| members.iter().any(|&mh| hamming(hash, mh) <= threshold))
+                .map(|(gid, _)| gid);
 
             if let Some(gid) = matched {
                 assignments[i] = Some(gid);
+                group_members[gid].push(hash);
             } else {
                 assignments[i] = Some(next_group_id);
-                group_representatives.push((next_group_id, hash));
+                group_members.push(vec![hash]);
                 next_group_id += 1;
             }
         }
