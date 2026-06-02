@@ -236,6 +236,24 @@ Apertin is built on a **Rust + Svelte + Tauri** stack. The separation of concern
 xcode-select --install
 ```
 
+### macOS — First Launch (Gatekeeper)
+
+Because Apertin is not yet notarised with an Apple Developer certificate, macOS will show:
+
+> *"Apple could not verify 'Apertin' is free of malware…"*
+
+**One-time fix — run this in Terminal:**
+
+```bash
+xattr -cr /Applications/Apertin.app
+```
+
+Then double-click the app normally. macOS will not ask again.
+
+> **Tip:** If you haven't moved the app to `/Applications` yet, drag the `.app` from the mounted `.dmg` into Terminal instead of typing the path.
+
+---
+
 ### Clone & Run
 
 ```bash

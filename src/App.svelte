@@ -49,7 +49,7 @@
         updateAvailable = latestVersion !== current && latestVersion > current;
       }
     } catch (_) {
-      if (!silent) alert('Güncelleme kontrolü başarısız. İnternet bağlantınızı kontrol edin.');
+      if (!silent) alert('Update check failed. Please check your internet connection.');
     } finally {
       checkingUpdate = false;
       updateCheckDone = true;
@@ -827,23 +827,23 @@
           <span style="color: hsl(var(--text-primary))">Aper</span><span style="color: hsl(var(--accent-amber))">tin</span>
           <span class="brand-version">v{appVersion}</span>
           {#if updateAvailable}
-            <span class="update-badge" title="Yeni sürüm: v{latestVersion}">● Güncelleme var</span>
+            <span class="update-badge" title="New version available: v{latestVersion}">● Update available</span>
           {/if}
         </span>
         <div class="brand-sub">
           Developed with ❤️ by Mustafa Erdem Köşk
           {#if updateAvailable}
             <a class="update-link" href={updateReleaseUrl} target="_blank" rel="noreferrer">
-              v{latestVersion} indir →
+              Download v{latestVersion} →
             </a>
           {:else}
             <button
               class="update-check-btn"
               on:click={() => checkForUpdates(false)}
               disabled={checkingUpdate}
-              title="Güncelleme kontrol et"
+              title="Check for updates"
             >
-              {checkingUpdate ? '⏳' : updateCheckDone ? '✓ Güncel' : '↻ Güncelle?'}
+              {checkingUpdate ? '⏳' : updateCheckDone ? '✓ Up to date' : '↻ Check update'}
             </button>
           {/if}
         </div>
