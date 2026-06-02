@@ -427,24 +427,92 @@ pub fn parse_isobmff(
 }
 
 /// Computes a 64-bit dHash (difference hash) from raw JPEG bytes.
-/// Resize to 9×8 grayscale, compare adjacent pixels left→right per row.
-/// Hamming distance ≤ 10 between two hashes → visually similar photos.
-pub fn compute_dhash(jpeg_bytes: &[u8]) -> Option<u64> {
-    let img = image::load_from_memory(jpeg_bytes).ok()?;
-    let small = img.resize_exact(9, 8, image::imageops::FilterType::Nearest);
-    let gray = small.to_luma8();
+/// Perceptual hash (pHash) via 2-D DCT.
+///
+/// Algorithm:
+///   1. Resize to 32×32 with a good downscale filter (Triangle/bilinear).
+///   2. Convert to grayscale (luma).
+///   3. Apply separable 2-D DCT-II (row-wise then column-wise).
+///   4. Take the top-left 8×8 block of DCT coefficients (low frequencies).
+///      These encode the "scene structure" — robust to noise, blur, and
+///      mild exposure differences because those are high-frequency artifacts.
+///   5. Build a 64-bit hash: bit i = 1 if coeff[i] > median(all 64 coeffs).
+///
+/// Recommended Hamming thresholds:
+///   ≤  6 → strict  (burst / near-identical shots)
+///   ≤ 10 → normal  (same scene, varying exposure/framing)
+///   ≤ 15 → loose   (similar subject, different angle)
+pub fn compute_phash(jpeg_bytes: &[u8]) -> Option<u64> {
+    const SIZE: usize = 32;
+    const HASH_BITS: usize = 8; // use 8×8 = 64-bit hash
 
+    let img = image::load_from_memory(jpeg_bytes).ok()?;
+    let resized = img.resize_exact(SIZE as u32, SIZE as u32, image::imageops::FilterType::Triangle);
+    let gray = resized.to_luma8();
+
+    let pixels: Vec<f32> = gray.pixels().map(|p| p[0] as f32).collect();
+
+    // Separable 2D DCT-II
+    let dct = dct2d(&pixels, SIZE);
+
+    // Extract top-left HASH_BITS × HASH_BITS block (skip nothing — DC included)
+    let mut low = [0f32; 64];
+    for y in 0..HASH_BITS {
+        for x in 0..HASH_BITS {
+            low[y * HASH_BITS + x] = dct[y * SIZE + x];
+        }
+    }
+
+    // Median of the 64 low-frequency coefficients
+    let mut sorted = low;
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted[32];
+
+    // Hash: bit i set iff low[i] > median
     let mut hash: u64 = 0;
-    for y in 0..8u32 {
-        for x in 0..8u32 {
-            let left = gray.get_pixel(x, y)[0];
-            let right = gray.get_pixel(x + 1, y)[0];
-            if right > left {
-                hash |= 1u64 << (y * 8 + x);
-            }
+    for (i, &v) in low.iter().enumerate() {
+        if v > median {
+            hash |= 1u64 << i;
         }
     }
     Some(hash)
+}
+
+/// 1-D DCT-II (unnormalised): output[k] = Σ_i input[i] · cos(π·k·(2i+1) / (2N))
+fn dct1d(input: &[f32]) -> Vec<f32> {
+    let n = input.len();
+    let nf = n as f32;
+    (0..n)
+        .map(|k| {
+            input
+                .iter()
+                .enumerate()
+                .map(|(i, &x)| {
+                    x * (std::f32::consts::PI * k as f32 * (2 * i + 1) as f32 / (2.0 * nf)).cos()
+                })
+                .sum::<f32>()
+        })
+        .collect()
+}
+
+/// Row-then-column separable 2-D DCT-II on a `size×size` image.
+fn dct2d(pixels: &[f32], size: usize) -> Vec<f32> {
+    // Row-wise DCT
+    let mut tmp = vec![0f32; size * size];
+    for y in 0..size {
+        let row_dct = dct1d(&pixels[y * size..(y + 1) * size]);
+        tmp[y * size..(y + 1) * size].copy_from_slice(&row_dct);
+    }
+    // Column-wise DCT
+    let mut out = vec![0f32; size * size];
+    for x in 0..size {
+        let col: Vec<f32> = (0..size).map(|y| tmp[y * size + x]).collect();
+        let col_dct = dct1d(&col);
+        for y in 0..size {
+            out[y * size + x] = col_dct[y];
+        }
+    }
+    out
 }
 
 /// Scans PNG chunks for an `eXIf` chunk and parses the TIFF/EXIF data inside.

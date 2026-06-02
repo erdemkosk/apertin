@@ -76,27 +76,40 @@ struct GroupProgress {
     total: usize,
 }
 
-/// Reads a JPEG from the first 2 MB of a file (fast thumbnail, sufficient for dHash).
-fn dhash_for_file(file_path: &str) -> Option<u64> {
+/// Reads a JPEG from the first 2 MB of a file (fast thumbnail, sufficient for pHash).
+fn phash_for_file(file_path: &str) -> Option<u64> {
     let file = File::open(file_path).ok()?;
     let mmap = unsafe { memmap2::MmapOptions::new().map(&file).ok()? };
     // Limit to first 2 MB — embedded thumbnails are always near the start
     let scan_end = mmap.len().min(2 * 1024 * 1024);
     let (offset, length) = parser::scan_for_largest_jpeg(&mmap[..scan_end])?;
     let jpeg = &mmap[offset as usize..(offset + length) as usize];
-    parser::compute_dhash(jpeg)
+    parser::compute_phash(jpeg)
 }
 
-/// Visual-similarity grouping using dHash with **chain-linking**.
+/// Visual-similarity grouping using **pHash + complete-linkage clustering**.
 ///
-/// Runs in a blocking thread so the async runtime stays free and the UI
-/// never freezes. Progress events carry only the counter (not the full
-/// assignments array) so the frontend doesn't re-render the list repeatedly.
+/// ## Why complete-linkage?
+/// Single-linkage (chain-linking) suffers from the "bridge" problem:
+///   A ≈ B, B ≈ C  →  A and C end up in the same group even if dist(A,C) > threshold.
+/// Complete-linkage fixes this: a photo joins a group only when it is within
+/// `threshold` of **every** existing member. Groups therefore stay tight and
+/// semantically consistent.
 ///
-/// `threshold` — caller-controlled Hamming distance (0-64):
-///   8  = strict   (near-identical, burst shots only)
-///  15  = normal   (same scene, varying exposure)
-///  22  = loose    (similar subject, different framing)
+/// ## Why pHash (DCT-based) instead of dHash?
+/// dHash compares adjacent pixel pairs at 9×8 — it is extremely sensitive to
+/// small exposure / focus changes common in burst shooting.
+/// pHash extracts 8×8 low-frequency DCT coefficients from a 32×32 thumbnail.
+/// Low frequencies encode global scene structure; noise, blur, and minor
+/// exposure shifts are high-frequency artifacts and are automatically ignored.
+///
+/// ## Threshold guide (Hamming distance over 64 bits):
+///   ≤  6 → strict  (near-identical burst shots)
+///   ≤ 10 → normal  (same scene, varying exposure/framing)
+///   ≤ 15 → loose   (similar subject, different angle)
+///
+/// Runs in spawn_blocking so the async runtime and UI remain responsive.
+/// Progress events carry only the counter (not the full assignments array).
 #[tauri::command]
 async fn analyze_groups(
     app: tauri::AppHandle,
@@ -106,32 +119,54 @@ async fn analyze_groups(
     tauri::async_runtime::spawn_blocking(move || {
         let threshold = threshold.min(64);
         let total = file_paths.len();
-        let mut assignments: Vec<Option<usize>> = vec![None; total];
-        let mut group_members: Vec<Vec<u64>> = Vec::new();
-        let mut next_group_id: usize = 0;
 
-        // Emit at most ~20 progress events regardless of file count
+        // Phase 1: compute all pHashes in parallel (rayon)
+        let hashes: Vec<Option<u64>> = file_paths
+            .par_iter()
+            .map(|p| phash_for_file(p))
+            .collect();
+
+        // Phase 2: complete-linkage online clustering (sequential, order-stable)
+        let mut assignments: Vec<Option<usize>> = vec![None; total];
+        // group_hashes[g] = all pHash values of members already in group g
+        let mut group_hashes: Vec<Vec<u64>> = Vec::new();
+
+        // Emit at most ~20 progress events
         let step = (total / 20).max(5);
 
-        for (i, path) in file_paths.iter().enumerate() {
-            if let Some(hash) = dhash_for_file(path) {
-                let matched = group_members
-                    .iter()
-                    .enumerate()
-                    .find(|(_, members)| members.iter().any(|&mh| hamming(hash, mh) <= threshold))
-                    .map(|(gid, _)| gid);
+        for (i, hash_opt) in hashes.iter().enumerate() {
+            match hash_opt {
+                None => {
+                    // No extractable thumbnail → own singleton group
+                    assignments[i] = Some(group_hashes.len());
+                    group_hashes.push(vec![]);
+                }
+                Some(hash) => {
+                    let hash = *hash;
+                    // Complete-linkage: only join a group if this hash is within
+                    // `threshold` of EVERY member already in that group.
+                    let best = group_hashes
+                        .iter()
+                        .enumerate()
+                        .find(|(_, members)| {
+                            !members.is_empty()
+                                && members.iter().all(|&mh| hamming(hash, mh) <= threshold)
+                        })
+                        .map(|(gid, _)| gid);
 
-                if let Some(gid) = matched {
-                    assignments[i] = Some(gid);
-                    group_members[gid].push(hash);
-                } else {
-                    assignments[i] = Some(next_group_id);
-                    group_members.push(vec![hash]);
-                    next_group_id += 1;
+                    match best {
+                        Some(gid) => {
+                            assignments[i] = Some(gid);
+                            group_hashes[gid].push(hash);
+                        }
+                        None => {
+                            assignments[i] = Some(group_hashes.len());
+                            group_hashes.push(vec![hash]);
+                        }
+                    }
                 }
             }
 
-            // Emit lightweight progress (no assignments clone) at throttled intervals
             if (i + 1) % step == 0 || i + 1 == total {
                 app.emit("group-progress", GroupProgress { processed: i + 1, total }).ok();
             }

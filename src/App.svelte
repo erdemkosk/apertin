@@ -110,8 +110,13 @@
   const TIME_GAPS = [{ label: '30s', value: 30 }, { label: '2 min', value: 120 }, { label: '5 min', value: 300 }];
   let timeGap = 120;
   // Visual similarity threshold presets (Hamming, 0-64)
-  const THRESHOLDS = [{ label: 'Strict', value: 8 }, { label: 'Normal', value: 15 }, { label: 'Loose', value: 22 }];
-  let visualThreshold = 15;
+  // pHash thresholds — Hamming distance over 64 bits.
+  // pHash uses DCT low-frequencies → more stable than dHash; lower values work.
+  //   6 = burst / near-identical only
+  //  10 = same scene, varying exposure/framing   (recommended default)
+  //  15 = similar subject, different angle
+  const THRESHOLDS = [{ label: 'Burst', value: 6 }, { label: 'Normal', value: 10 }, { label: 'Loose', value: 15 }];
+  let visualThreshold = 10;
 
   $: groupSizes = (() => {
     const s = {};
