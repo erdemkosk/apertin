@@ -109,8 +109,6 @@
 
   // Zoom / Focus check states
   let isZoomed = false;
-  let mouseX = 50;
-  let mouseY = 50;
 
   // Real-time keyboard press states for indicator lighting
   let activeKeys = {
@@ -276,6 +274,7 @@
     if (index >= 0 && index < files.length) {
       currentIndex = index;
       isZoomed = false;
+      panOffsets = {};
       compareIndices = [index];
       if (mode === 'compare') {
         mode = 'gallery';
@@ -537,11 +536,11 @@
   function nextImage() {
     if (currentIndex < files.length - 1) {
       currentIndex += 1;
-      mouseX = 50;
-      mouseY = 50;
+      panOffsets = {};
       saveSession();
     } else {
       isZoomed = false;
+      panOffsets = {};
       enterSummaryState();
     }
   }
@@ -549,8 +548,7 @@
   function prevImage() {
     if (currentIndex > 0) {
       currentIndex -= 1;
-      mouseX = 50;
-      mouseY = 50;
+      panOffsets = {};
       saveSession();
     }
   }
@@ -559,25 +557,45 @@
   function toggleMode() {
     mode = mode === 'gallery' ? 'swipe' : 'gallery';
     isZoomed = false;
+    panOffsets = {};
   }
 
-  // Mouse zoom tracking
+  // Sürükle-Bırak (Drag-to-Pan) fare olayları
+  let panOffsets = {}; // Maps filePath -> { x, y }
+  let isDragging = false;
+  let draggedFilePath = null;
+  let startX = 0;
+  let startY = 0;
+  let startPanX = 0;
+  let startPanY = 0;
+
+  function handleMouseDown(e, filePath) {
+    if (!isZoomed) return;
+    isDragging = true;
+    draggedFilePath = filePath;
+    if (!panOffsets[filePath]) {
+      panOffsets[filePath] = { x: 0, y: 0 };
+    }
+    startX = e.clientX;
+    startY = e.clientY;
+    startPanX = panOffsets[filePath].x;
+    startPanY = panOffsets[filePath].y;
+    e.preventDefault();
+  }
+
   function handleMouseMove(e) {
-    if (!isZoomed) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    mouseX = ((e.clientX - rect.left) / rect.width) * 100;
-    mouseY = ((e.clientY - rect.top) / rect.height) * 100;
+    if (!isZoomed || !isDragging || !draggedFilePath) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    panOffsets[draggedFilePath] = {
+      x: startPanX + dx,
+      y: startPanY + dy
+    };
+    panOffsets = { ...panOffsets };
   }
 
-  // Compare Mode Mouse zoom tracking
-  let compareMouseX = 50;
-  let compareMouseY = 50;
-
-  function handleMouseMoveCompare(e) {
-    if (!isZoomed) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    compareMouseX = ((e.clientX - rect.left) / rect.width) * 100;
-    compareMouseY = ((e.clientY - rect.top) / rect.height) * 100;
+  function handleMouseUp() {
+    isDragging = false;
   }
 
   // Compare mode culling status toggles
@@ -728,6 +746,9 @@
   }
   function toggleZoom() {
     isZoomed = !isZoomed;
+    if (!isZoomed) {
+      panOffsets = {};
+    }
   }
 
   // Keyboard Event Handlers
@@ -770,7 +791,7 @@
 
     // Zoom Focus key - Toggle on keypress instead of hold
     if (e.key === ' ' || e.code === 'Space') {
-      isZoomed = !isZoomed;
+      toggleZoom();
     }
   }
 
@@ -944,9 +965,10 @@
       cleanupSummaryPreviews();
     };
   });
+
 </script>
 
-<svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} on:click={hideContextMenu} />
+<svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} on:click={hideContextMenu} on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
 
 <!-- Main Wrapper -->
 <div class="app-container {isZoomed ? 'fullscreen-active' : ''}">
@@ -1247,7 +1269,7 @@
               <div class="legend-item">
                 <span class="legend-mode">FOCUS ZOOM:</span>
                 <div>
-                  <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd> Sharpness Zoom (Hold)
+                  <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd> Sharpness Zoom / Pan (Drag)
                 </div>
               </div>
               <div class="legend-item">
@@ -1275,16 +1297,16 @@
                   <div class="compare-pane glass-panel">
                     <div 
                       class="compare-viewport"
-                      on:mousemove={handleMouseMoveCompare}
                       on:dblclick={toggleZoom}
-                      style="cursor: {isZoomed ? 'zoom-out' : 'zoom-in'}"
                     >
                       {#if url}
                         <img 
                           src={url} 
                           alt="RAW Preview" 
                           class="compare-img {isZoomed ? 'zoomed' : ''}"
-                          style="transform-origin: {compareMouseX}% {compareMouseY}%;"
+                          style="transform: translate({(panOffsets[file.file_path]?.x || 0)}px, {(panOffsets[file.file_path]?.y || 0)}px) {isZoomed ? 'scale(3.5)' : 'scale(1)'}; cursor: {isZoomed ? (isDragging && draggedFilePath === file.file_path ? 'grabbing' : 'grab') : 'zoom-in'};"
+                          crossorigin="anonymous"
+                          on:mousedown={(e) => handleMouseDown(e, file.file_path)}
                         />
                       {:else}
                         <div class="no-preview">No Preview Available</div>
@@ -1324,16 +1346,16 @@
                 <div class="image-card glass-panel gallery">
                   <div 
                     class="image-viewport"
-                    on:mousemove={handleMouseMove}
                     on:dblclick={toggleZoom}
-                    style="cursor: zoom-out"
                   >
                     {#if currentPreviewUrl}
                       <img 
                         src={currentPreviewUrl} 
                         alt="RAW Preview" 
                         class="preview-img zoomed"
-                        style="transform-origin: {mouseX}% {mouseY}%;"
+                        style="transform: translate({(panOffsets[files[currentIndex]?.file_path]?.x || 0)}px, {(panOffsets[files[currentIndex]?.file_path]?.y || 0)}px); cursor: {isDragging && draggedFilePath === files[currentIndex]?.file_path ? 'grabbing' : 'grab'};"
+                        crossorigin="anonymous"
+                        on:mousedown={(e) => handleMouseDown(e, files[currentIndex]?.file_path)}
                       />
                     {:else}
                       <div class="no-preview">No Preview Available</div>
@@ -1393,12 +1415,9 @@
                     <div class="swipe-overlay star {swipeState === 'star' ? 'show' : ''}">STARRED</div>
                   {/if}
 
-                  <!-- Image view container -->
                   <div 
                     class="image-viewport"
-                    on:mousemove={handleMouseMove}
                     on:dblclick={toggleZoom}
-                    style="cursor: {isZoomed ? 'zoom-out' : 'zoom-in'}"
                   >
                     {#if previewLoading}
                       <div class="viewport-loader">
@@ -1411,7 +1430,9 @@
                         src={currentPreviewUrl} 
                         alt="RAW Preview" 
                         class="preview-img {isZoomed ? 'zoomed' : ''}"
-                        style="transform-origin: {mouseX}% {mouseY}%;"
+                        style="transform: translate({(panOffsets[files[currentIndex]?.file_path]?.x || 0)}px, {(panOffsets[files[currentIndex]?.file_path]?.y || 0)}px); cursor: {isZoomed ? (isDragging && draggedFilePath === files[currentIndex]?.file_path ? 'grabbing' : 'grab') : 'zoom-in'};"
+                        crossorigin="anonymous"
+                        on:mousedown={(e) => handleMouseDown(e, files[currentIndex]?.file_path)}
                       />
                     {:else}
                       <div class="no-preview">No Preview Available</div>
@@ -1726,6 +1747,8 @@
     background: hsl(var(--border-muted));
     margin: 0 4px;
   }
+
+
 
   /* ── Similarity grouping ─────────────────────────────────────────────── */
   .group-panel {
