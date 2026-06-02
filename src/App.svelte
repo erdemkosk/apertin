@@ -756,12 +756,16 @@
   }
 
   // Reset Session
-  function startNewSession() {
+  async function startNewSession() {
+    // Delete the saved session file from disk first (dirPath still set at this point)
+    await clearSession();
+
     cleanupPreviewUrl();
     cleanupNextPreviewUrl();
     cleanupSummaryPreviews();
     files = [];
     currentIndex = 0;
+    dirPath = '';
     keepList = new Set();
     trashList = new Set();
     starList = new Set();
