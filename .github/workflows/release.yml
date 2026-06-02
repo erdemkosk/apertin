@@ -95,6 +95,6 @@ jobs:
             | Linux | `.deb` / `.AppImage` |
 
             Select the correct installer for your OS from the **Assets** list below.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
