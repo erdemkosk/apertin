@@ -37,11 +37,13 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | 👁️ **Browse Mode** | Classic gallery browser with instant prev/next navigation |
 | 🔍 **Focus Check Zoom** | Press `Space` to enter pixel-level zoom mode across all images |
 | ⭐ **Star Rating** | Mark hero shots with `↑` for selective editing |
+| 🔗 **Smart Grouping** | Automatically cluster burst shots and similar scenes before you cull |
 | 📊 **EXIF Sidebar** | Camera, lens, shutter, aperture, ISO, focal length at a glance |
 | 🗂️ **macOS "Open With"** | Right-click any folder in Finder → Open With → Apertin |
 | 🖱️ **Drag & Drop** | Drag a folder onto the app window to start instantly |
 | 🗑️ **OS Trash** | Trashed files go to your system recycle bin |
 | ✅ **Selected_to_Edit export** | Kept files moved to `Selected_to_Edit/` ready for Lightroom/Capture One |
+| 💾 **Session persistence** | Progress is saved per folder — close and resume at any time |
 | 🌑 **Dark mode only** | Premium dark UI — built for low-light post-production environments |
 | 🔒 **Fully local** | Zero network requests, zero telemetry, zero cloud |
 
@@ -107,6 +109,86 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 
 ---
 
+## 🔗 Smart Grouping
+
+Apertin can automatically group similar photos before you start culling, so you can make one keep/trash decision for an entire burst instead of reviewing each frame individually.
+
+### Two grouping modes
+
+**⏱ Time-based grouping** runs entirely in the browser — no Rust invocation needed. It reads the `DateTimeOriginal` EXIF field from each photo and clusters consecutive shots taken within a configurable time window.
+
+| Preset | Gap | Typical use |
+|---|---|---|
+| 30 s | 30 seconds | Tight bursts, bracketed exposures |
+| 2 min | 2 minutes | Scene changes during a walk-around |
+| 5 min | 5 minutes | Different locations in the same session |
+
+**⬡ Visual similarity grouping** is powered by a Rust backend algorithm that analyses the pixel content of each photo's embedded preview thumbnail.
+
+### pHash algorithm (DCT-based perceptual hash)
+
+Each photo is reduced to a 64-bit fingerprint using the following pipeline:
+
+```
+Embedded JPEG thumbnail (first 2 MB of file, memory-mapped)
+        │
+        ▼
+  Resize to 32 × 32 (Triangle / bilinear filter)
+        │
+        ▼
+  Convert to grayscale (luma)
+        │
+        ▼
+  Separable 2-D DCT-II
+  (row-wise 1-D DCT, then column-wise 1-D DCT)
+        │
+        ▼
+  Extract top-left 8 × 8 low-frequency block
+  (these coefficients encode global scene structure —
+   noise, blur, and minor exposure changes live in the
+   high-frequency region that is discarded here)
+        │
+        ▼
+  64-bit hash: bit i = 1 if coeff[i] > median(all 64 coeffs)
+```
+
+Two hashes are compared with **Hamming distance** (number of differing bits out of 64). Lower distance = more visually similar.
+
+| Preset | Hamming ≤ | What it matches |
+|---|---|---|
+| Burst | 6 | Near-identical frames, only shutter timing differs |
+| Normal | 10 | Same scene with varying exposure, slight reframe |
+| Loose | 15 | Similar subject from a different angle |
+
+### Why pHash over dHash?
+
+The naïve approach — **dHash** (difference hash) — compares adjacent pixel brightness at 9×8 resolution. It is extremely sensitive to exposure changes, focus variance, and even minor reframing, which causes burst shots to be assigned different hashes and unrelated photos to accidentally collide.
+
+pHash's **DCT low-frequency coefficients** are robust because:
+- Exposure / brightness shifts are low-amplitude in the DC term (coeff[0,0]) and handled by the median normalisation
+- Noise and blur are high-frequency — they are discarded by taking only the 8×8 low-frequency block
+- Global scene composition (the actual "content") is captured in the 8×8 block regardless of minor photographic variations
+
+### Complete-linkage clustering (no bridge problem)
+
+Once all hashes are computed (in parallel via Rayon), they are clustered using **complete-linkage**:
+
+> A photo joins an existing group only if its Hamming distance to **every current member** of that group is within the threshold.
+
+This prevents the *bridge problem* that plagues single-linkage clustering:
+
+```
+Single-linkage (old):   A ≈ B  and  B ≈ C  →  A + B + C same group  ✗
+                        (even if A and C are completely different scenes)
+
+Complete-linkage (new): A ≈ B  and  B ≈ C  but  A ≇ C
+                        →  {A, B} and {C} are separate groups         ✓
+```
+
+Groups are anchored at the earliest member's position in the file list. All members are rendered consecutively in the sidebar, so you can immediately see the cluster and decide with a single keep/trash action.
+
+---
+
 ## 🏗️ Architecture
 
 Apertin is built on a **Rust + Svelte + Tauri** stack. The separation of concerns is clean:
@@ -126,6 +208,7 @@ Apertin is built on a **Rust + Svelte + Tauri** stack. The separation of concern
 │  - parse_raw_file (EXIF + preview)      │
 │  - get_raw_preview (mmap byte read)     │
 │  - execute_culling_actions (fs moves)   │
+│  - analyze_groups (pHash + clustering)  │
 │  - select_folder (rfd native dialog)    │
 │  - get_initial_path (CLI arg / Open With)│
 └─────────────────────────────────────────┘
@@ -218,6 +301,8 @@ Apertin's UI is built around a single principle: **the photo should fill your vi
 | Backend | [Rust](https://www.rust-lang.org/) | Memory safety + parallel performance |
 | File walking | [walkdir](https://crates.io/crates/walkdir) | Efficient recursive directory traversal |
 | Parallelism | [rayon](https://crates.io/crates/rayon) | Work-stealing thread pool for parallel file parsing |
+| Image decode | [image](https://crates.io/crates/image) | JPEG decode for pHash thumbnail generation |
+| OS trash | [trash](https://crates.io/crates/trash) | Cross-platform recycle bin integration |
 | Native dialogs | [rfd](https://crates.io/crates/rfd) | Cross-platform Rust file dialog |
 | Typography | [Plus Jakarta Sans](https://fonts.google.com/specimen/Plus+Jakarta+Sans) | Premium UI typeface |
 
@@ -229,7 +314,7 @@ Apertin's UI is built around a single principle: **the photo should fill your vi
 - [ ] **Linux support** (GTK file dialog)  
 - [ ] **Collection view** — grid browse with zoom
 - [ ] **Color label system** — reject / 1-star / 2-star / pick
-- [ ] **Duplicate detection** — flag near-identical shots in burst sequences
+- [x] **Smart grouping** — pHash + complete-linkage clustering for burst and similar-scene detection
 - [ ] **XMP sidecar export** — write ratings back as metadata without moving files
 - [ ] **Lightroom Classic integration** — open Selected_to_Edit directly in catalog
 
