@@ -803,3 +803,154 @@ button {
   width: 18px;
   height: 18px;
 }
+
+/* Sidebar Compare Selected Style */
+.file-item.compare-selected {
+  border-right: 3px solid hsl(var(--accent-amber)) !important;
+  background: hsl(var(--accent-amber) / 0.08) !important;
+}
+
+/* Compare Split View Grid */
+.compare-grid {
+  display: grid;
+  width: 100%;
+  height: 95%;
+  max-width: 1400px;
+  gap: 16px;
+  margin: 0 auto;
+}
+
+.compare-grid.columns-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.compare-grid.columns-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.compare-grid.columns-4 {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+}
+
+/* Compare Pane */
+.compare-pane {
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  height: 100%;
+  position: relative;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.compare-viewport {
+  flex: 1;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  background: #000;
+}
+
+.compare-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: transform 0.05s ease-out;
+}
+
+.compare-img.zoomed {
+  transform: scale(3.5);
+}
+
+.compare-filename {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Compare Actions */
+.compare-pane-actions {
+  display: flex;
+  background: hsl(var(--bg-card));
+  border-top: 1px solid hsl(var(--border-muted));
+  padding: 8px;
+  gap: 8px;
+}
+
+.comp-act-btn {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid hsl(var(--border-muted));
+  color: hsl(var(--text-secondary));
+  background: hsl(var(--bg-input) / 0.5);
+  transition: all 0.15s ease;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.comp-act-btn:hover {
+  background: hsl(var(--bg-input));
+  color: #fff;
+}
+
+.comp-act-btn.keep.active {
+  border-color: hsl(var(--accent-keep) / 0.5);
+  background: hsl(var(--accent-keep) / 0.15);
+  color: hsl(var(--accent-keep));
+}
+
+.comp-act-btn.star.active {
+  border-color: hsl(var(--accent-star) / 0.5);
+  background: hsl(var(--accent-star) / 0.15);
+  color: hsl(var(--accent-star));
+}
+
+.comp-act-btn.trash.active {
+  border-color: hsl(var(--accent-trash) / 0.5);
+  background: hsl(var(--accent-trash) / 0.15);
+  color: hsl(var(--accent-trash));
+}
+
+/* XMP Toggle Label Summary Actions */
+.xmp-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: hsl(var(--bg-input) / 0.4);
+  border: 1px solid hsl(var(--border-muted));
+  transition: all 0.15s ease;
+}
+
+.xmp-toggle-label:hover {
+  background: hsl(var(--bg-input) / 0.8);
+  border-color: hsl(var(--accent-amber) / 0.4);
+}
+
+.xmp-toggle-label input[type="checkbox"] {
+  accent-color: hsl(var(--accent-amber));
+  cursor: pointer;
+}
+
+.xmp-toggle-label span {
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--text-secondary));
+}

@@ -58,10 +58,25 @@
 
   // App States
   let state = 'welcome'; // 'welcome' | 'culling' | 'summary' | 'complete'
-  let mode = 'gallery'; // 'gallery' | 'swipe' (active culling)
+  let mode = 'gallery'; // 'gallery' | 'swipe' | 'compare'
   let dirPath = '';
   let files = [];
   let currentIndex = 0;
+  let compareIndices = [];
+  let exportXmp = false;
+
+  // Context Menu State
+  let contextMenuVisible = false;
+  let contextMenuX = 0;
+  let contextMenuY = 0;
+  let contextMenuFile = null;
+
+  // Histogram State
+  let lumaData = new Uint32Array(256);
+  let rData = new Uint32Array(256);
+  let gData = new Uint32Array(256);
+  let bData = new Uint32Array(256);
+  let histogramMaxVal = 0;
   
   // Selection Lists
   let keepList = new Set();
@@ -249,6 +264,38 @@
     if (index >= 0 && index < files.length) {
       currentIndex = index;
       isZoomed = false;
+      compareIndices = [index];
+      if (mode === 'compare') {
+        mode = 'gallery';
+      }
+    }
+  }
+
+  // Handle sidebar file item click (Ctrl/Cmd click for multi-select compare)
+  function handleFileItemClick(e, idx) {
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      // If we are currently in single mode, initialize compareIndices with the current index
+      if (compareIndices.length <= 1 && !compareIndices.includes(currentIndex)) {
+        compareIndices = [currentIndex];
+      }
+      if (compareIndices.includes(idx)) {
+        compareIndices = compareIndices.filter(i => i !== idx);
+      } else {
+        if (compareIndices.length >= 4) {
+          alert("You can compare up to 4 images at once.");
+          return;
+        }
+        compareIndices = [...compareIndices, idx];
+      }
+
+      if (compareIndices.length > 1) {
+        mode = 'compare';
+      } else if (compareIndices.length === 1) {
+        jumpToImage(compareIndices[0]);
+      }
+    } else {
+      jumpToImage(idx);
     }
   }
 
@@ -261,70 +308,38 @@
     preloadPreviews(currentIndex);
   }
 
-  // Clean up main object URL to prevent RAM leaks
+  // Clean up main preview URL
   function cleanupPreviewUrl() {
-    if (currentPreviewUrl) {
-      if (currentPreviewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(currentPreviewUrl);
-      }
-      currentPreviewUrl = '';
-    }
+    currentPreviewUrl = '';
   }
 
   function cleanupNextPreviewUrl() {
-    if (nextPreviewUrl) {
-      if (nextPreviewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(nextPreviewUrl);
-      }
-      nextPreviewUrl = '';
-    }
+    nextPreviewUrl = '';
   }
 
   // Fetch preview URL helper
-  async function fetchPreviewUrl(index) {
+  function fetchPreviewUrl(index) {
     if (index < 0 || index >= files.length) return '';
     const file = files[index];
-    try {
-      if (invoke) {
-        const bytes = await invoke('get_raw_preview', {
-          path: file.file_path,
-          offset: file.preview_offset,
-          length: file.preview_length
-        });
-        const ext = file.file_path.split('.').pop()?.toLowerCase() ?? '';
-        const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
-        const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
-        return URL.createObjectURL(blob);
-      } else {
-        // Mock preview for browser development
-        return 'https://picsum.photos/1600/1000?random=' + index;
-      }
-    } catch (e) {
-      console.error("Failed to load preview:", e);
-      return '';
+    if (invoke) {
+      const encodedPath = encodeURIComponent(file.file_path);
+      return `apertin-preview://localhost?path=${encodedPath}&offset=${file.preview_offset}&length=${file.preview_length}`;
+    } else {
+      // Mock preview for browser development
+      return 'https://picsum.photos/1600/1000?random=' + index;
     }
   }
 
-  // Preload current and next preview to enable zero-latency transitions
-  async function preloadPreviews(index) {
-    previewLoading = true;
-    try {
-      // Load current preview
-      const currentUrl = await fetchPreviewUrl(index);
-      cleanupPreviewUrl();
-      currentPreviewUrl = currentUrl;
+  // Set current and next preview synchronously
+  function preloadPreviews(index) {
+    previewLoading = false; // Synchronous custom protocol loading, no JS loader needed
+    currentPreviewUrl = fetchPreviewUrl(index);
 
-      // Preload next preview in background
-      if (index + 1 < files.length) {
-        const nextUrl = await fetchPreviewUrl(index + 1);
-        cleanupNextPreviewUrl();
-        nextPreviewUrl = nextUrl;
-      } else {
-        cleanupNextPreviewUrl();
-        nextPreviewUrl = '';
-      }
-    } finally {
-      previewLoading = false;
+    // Preload next preview in background
+    if (index + 1 < files.length) {
+      nextPreviewUrl = fetchPreviewUrl(index + 1);
+    } else {
+      nextPreviewUrl = '';
     }
   }
 
@@ -415,7 +430,7 @@
       }
 
       if (files.length === 0) {
-        alert("No supported image files (.ARW, .NEF, .CR2, .CR3, .RAF, .DNG, .JPG, .JPEG, .PNG) found in this directory.");
+        alert("No supported image files (.ARW, .NEF, .CR2, .CR3, .RAF, .DNG, .ORF, .RW2, .PEF, .HEIC, .HEIF, .JPG, .JPEG, .PNG) found in this directory.");
         loading = false;
         return;
       }
@@ -542,6 +557,163 @@
     mouseY = ((e.clientY - rect.top) / rect.height) * 100;
   }
 
+  // Compare Mode Mouse zoom tracking
+  let compareMouseX = 50;
+  let compareMouseY = 50;
+
+  function handleMouseMoveCompare(e) {
+    if (!isZoomed) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    compareMouseX = ((e.clientX - rect.left) / rect.width) * 100;
+    compareMouseY = ((e.clientY - rect.top) / rect.height) * 100;
+  }
+
+  // Compare mode culling status toggles
+  function toggleCompareKeep(filePath) {
+    if (keepList.has(filePath)) {
+      keepList.delete(filePath);
+    } else {
+      keepList.add(filePath);
+      trashList.delete(filePath);
+    }
+    keepList = new Set(keepList);
+    trashList = new Set(trashList);
+    saveSession();
+  }
+
+  // Compare mode culling status toggles
+  function toggleCompareTrash(filePath) {
+    if (trashList.has(filePath)) {
+      trashList.delete(filePath);
+    } else {
+      trashList.add(filePath);
+      keepList.delete(filePath);
+    }
+    keepList = new Set(keepList);
+    trashList = new Set(trashList);
+    saveSession();
+  }
+
+  // Compare mode culling status toggles
+  function toggleCompareStar(filePath) {
+    if (starList.has(filePath)) {
+      starList.delete(filePath);
+    } else {
+      starList.add(filePath);
+    }
+    starList = new Set(starList);
+    saveSession();
+  }
+  // Context Menu functions
+  function showContextMenu(e, file) {
+    contextMenuX = e.clientX;
+    contextMenuY = e.clientY;
+    contextMenuFile = file;
+    contextMenuVisible = true;
+  }
+
+  function hideContextMenu() {
+    contextMenuVisible = false;
+  }
+
+  async function openInLightroom(filePath) {
+    hideContextMenu();
+    if (invoke) {
+      try {
+        await invoke('open_in_lightroom', { path: filePath });
+      } catch (e) {
+        alert("Failed to open in Lightroom: " + e);
+      }
+    } else {
+      console.log("Mock open in Lightroom:", filePath);
+    }
+  }
+
+  async function revealInFinder(filePath) {
+    hideContextMenu();
+    if (invoke) {
+      try {
+        await invoke('reveal_in_finder', { path: filePath });
+      } catch (e) {
+        alert("Failed to reveal in Finder: " + e);
+      }
+    } else {
+      console.log("Mock reveal in Finder:", filePath);
+    }
+  }
+
+  // Histogram calculation functions
+  function updateHistogram(imgUrl) {
+    if (!imgUrl) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      // Analyze a downscaled 128x128 image for fast performance
+      canvas.width = 128;
+      canvas.height = 128;
+      ctx.drawImage(img, 0, 0, 128, 128);
+
+      const imgData = ctx.getImageData(0, 0, 128, 128);
+      const data = imgData.data;
+
+      const l = new Uint32Array(256);
+      const r = new Uint32Array(256);
+      const g = new Uint32Array(256);
+      const b = new Uint32Array(256);
+
+      for (let i = 0; i < data.length; i += 4) {
+        const rv = data[i];
+        const gv = data[i + 1];
+        const bv = data[i + 2];
+        const lv = Math.round(0.299 * rv + 0.587 * gv + 0.114 * bv);
+
+        r[rv]++;
+        g[gv]++;
+        b[bv]++;
+        l[lv]++;
+      }
+
+      let max = 0;
+      for (let i = 0; i < 256; i++) {
+        if (r[i] > max) max = r[i];
+        if (g[i] > max) max = g[i];
+        if (b[i] > max) max = b[i];
+        if (l[i] > max) max = l[i];
+      }
+
+      rData = r;
+      gData = g;
+      bData = b;
+      lumaData = l;
+      histogramMaxVal = max;
+    };
+    img.src = imgUrl;
+  }
+
+  function generateSvgPath(data, max) {
+    if (max === 0) return "M 0 80";
+    let path = "M 0 80";
+    for (let i = 0; i < 256; i++) {
+      const x = (i / 255) * 200; // Map 256 values to width 200
+      const y = 80 - (data[i] / max) * 75; // Map to height 80, leaving padding
+      path += ` L ${x} ${y}`;
+    }
+    path += " L 200 80 Z";
+    return path;
+  }
+
+  // Reactive paths for the Histogram
+  $: rPath = generateSvgPath(rData, histogramMaxVal);
+  $: gPath = generateSvgPath(gData, histogramMaxVal);
+  $: bPath = generateSvgPath(bData, histogramMaxVal);
+  $: lumaPath = generateSvgPath(lumaData, histogramMaxVal);
+
+  // Trigger histogram updates reactively when current preview changes
+  $: if (currentPreviewUrl) {
+    updateHistogram(currentPreviewUrl);
+  }
   function toggleZoom() {
     isZoomed = !isZoomed;
   }
@@ -603,122 +775,77 @@
   }
 
   // Load previews dynamically for whichever review category is active
-  async function loadSummaryPreviews() {
-    loadingMessage = 'Loading review thumbnails...';
-    loading = true;
+  function loadSummaryPreviews() {
+    cleanupSummaryPreviews();
+    const listToLoad = reviewFilter === 'trash'
+      ? Array.from(trashList)
+      : reviewFilter === 'star'
+        ? Array.from(starList)
+        : Array.from(keepList);
+    for (const path of listToLoad) {
+      const file = files.find(f => f.file_path === path);
+      if (!file) continue;
 
-    try {
-      cleanupSummaryPreviews();
-      const listToLoad = reviewFilter === 'trash'
-        ? Array.from(trashList)
-        : reviewFilter === 'star'
-          ? Array.from(starList)
-          : Array.from(keepList);
-      for (const path of listToLoad) {
-        const file = files.find(f => f.file_path === path);
-        if (!file) continue;
-
-        if (invoke) {
-          const bytes = await invoke('get_raw_preview', {
-            path: file.file_path,
-            offset: file.preview_offset,
-            length: file.preview_length
-          });
-          const ext = file.file_path.split('.').pop()?.toLowerCase() ?? '';
-          const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-          const blob = new Blob([new Uint8Array(bytes)], { type: mime });
-          summaryPreviews[path] = URL.createObjectURL(blob);
-        } else {
-          summaryPreviews[path] = 'https://picsum.photos/400/250?random=' + Math.random();
-        }
+      if (invoke) {
+        const encodedPath = encodeURIComponent(file.file_path);
+        summaryPreviews[path] = `apertin-preview://localhost?path=${encodedPath}&offset=${file.preview_offset}&length=${file.preview_length}`;
+      } else {
+        summaryPreviews[path] = 'https://picsum.photos/400/250?random=' + Math.random();
       }
-      summaryPreviews = { ...summaryPreviews };
-    } catch (e) {
-      console.error("Failed to load review thumbnails:", e);
-    } finally {
-      loading = false;
     }
+    summaryPreviews = { ...summaryPreviews };
   }
 
   // Load reviews on transition to Summary State
-  async function enterSummaryState() {
+  function enterSummaryState() {
     state = 'summary';
     isZoomed = false;
     reviewFilter = 'trash';
-    await loadSummaryPreviews();
+    loadSummaryPreviews();
   }
 
   // Change review filter and load thumbnails
-  async function changeReviewFilter(filter) {
+  function changeReviewFilter(filter) {
     if (reviewFilter === filter) return;
     reviewFilter = filter;
-    await loadSummaryPreviews();
+    loadSummaryPreviews();
   }
 
   // Restore file from Trash -> back to Keep
-  async function restoreImage(path) {
+  function restoreImage(path) {
     trashList.delete(path);
     keepList.add(path);
 
     trashList = new Set(trashList);
     keepList = new Set(keepList);
 
-    if (summaryPreviews[path]) {
-      if (summaryPreviews[path].startsWith('blob:')) {
-        URL.revokeObjectURL(summaryPreviews[path]);
-      }
-      delete summaryPreviews[path];
-      summaryPreviews = { ...summaryPreviews };
-    }
-
     saveSession();
-    await loadSummaryPreviews();
+    loadSummaryPreviews();
   }
 
   // Unstar a file (from summary starred tab)
-  async function unstarImage(path) {
+  function unstarImage(path) {
     starList.delete(path);
     starList = new Set(starList);
 
-    if (summaryPreviews[path]) {
-      if (summaryPreviews[path].startsWith('blob:')) {
-        URL.revokeObjectURL(summaryPreviews[path]);
-      }
-      delete summaryPreviews[path];
-      summaryPreviews = { ...summaryPreviews };
-    }
-
     saveSession();
-    await loadSummaryPreviews();
+    loadSummaryPreviews();
   }
 
   // Move file from Keep -> to Trash
-  async function demoteImageToTrash(path) {
+  function demoteImageToTrash(path) {
     keepList.delete(path);
     trashList.add(path);
 
     keepList = new Set(keepList);
     trashList = new Set(trashList);
 
-    if (summaryPreviews[path]) {
-      if (summaryPreviews[path].startsWith('blob:')) {
-        URL.revokeObjectURL(summaryPreviews[path]);
-      }
-      delete summaryPreviews[path];
-      summaryPreviews = { ...summaryPreviews };
-    }
-
     saveSession();
-    await loadSummaryPreviews();
+    loadSummaryPreviews();
   }
 
   // Revoke all cached thumbnail URLs
   function cleanupSummaryPreviews() {
-    for (const url of Object.values(summaryPreviews)) {
-      if (url && url.startsWith('blob:')) {
-        URL.revokeObjectURL(url);
-      }
-    }
     summaryPreviews = {};
   }
 
@@ -739,10 +866,11 @@
           keepList: keepArr,
           trashList: trashArr,
           starList: starArr,
+          exportXmp: exportXmp,
         });
       } else {
         await new Promise(resolve => setTimeout(resolve, 2000));
-        console.log("Mock culling applied: Keep", keepArr, "Trash", trashArr, "Star", starArr);
+        console.log("Mock culling applied (exportXmp:", exportXmp, "): Keep", keepArr, "Trash", trashArr, "Star", starArr);
       }
       cleanupSummaryPreviews();
       await clearSession();
@@ -806,7 +934,7 @@
   });
 </script>
 
-<svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} />
+<svelte:window on:keydown={handleKeyDown} on:keyup={handleKeyUp} on:click={hideContextMenu} />
 
 <!-- Main Wrapper -->
 <div class="app-container {isZoomed ? 'fullscreen-active' : ''}">
@@ -923,6 +1051,7 @@
 
       <!-- Gallery Index Slider -->
       <div class="file-list-title">FOLDER DIRECTORY</div>
+      <div class="file-list-subtitle">Cmd/Ctrl + click to select compare</div>
       <div class="file-list">
         {#each displayOrder as idx, pos}
           {@const file = files[idx]}
@@ -938,9 +1067,10 @@
           {/if}
 
           <button
-            class="file-item {currentIndex === idx ? 'active' : ''} {inGroup ? 'in-group' : ''}"
+            class="file-item {currentIndex === idx ? 'active' : ''} {compareIndices.includes(idx) ? 'compare-selected' : ''} {inGroup ? 'in-group' : ''}"
             style={inGroup ? `--gc: ${groupColor(gid)}` : ''}
-            on:click={() => jumpToImage(idx)}
+            on:click={(e) => handleFileItemClick(e, idx)}
+            on:contextmenu|preventDefault={(e) => showContextMenu(e, file)}
           >
             <div class="file-info-left">
               <span class="file-idx">{idx + 1}</span>
@@ -1001,6 +1131,20 @@
           >
             🔥 Swipe Mode
           </button>
+          <button 
+            class="mode-btn {mode === 'grid' ? 'active' : ''}" 
+            on:click={() => mode = 'grid'}
+          >
+            📂 Grid Mode
+          </button>
+          {#if compareIndices.length > 1}
+            <button 
+              class="mode-btn {mode === 'compare' ? 'active' : ''}" 
+              on:click={() => mode = 'compare'}
+            >
+              📊 Compare ({compareIndices.length})
+            </button>
+          {/if}
           <div class="vertical-divider"></div>
           <button class="new-session-btn" on:click={startNewSession}>Reset Folder</button>
         </div>
@@ -1094,6 +1238,12 @@
                   <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd> Sharpness Zoom (Hold)
                 </div>
               </div>
+              <div class="legend-item">
+                <span class="legend-mode">COMPARE VIEW:</span>
+                <div>
+                  <kbd class="kbd-hint">Cmd</kbd> / <kbd class="kbd-hint">Ctrl</kbd> + Click sidebar
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1105,91 +1255,209 @@
           <!-- Swipe Mode Deck -->
           <div class="deck-area">
             
-            <div class="card-stack {mode}">
-              {#if mode === 'swipe'}
-                <!-- Physical photo stack background layers -->
-                {#if files.length - currentIndex > 2}
-                  <div class="card-underlay under-2"></div>
-                {/if}
-                {#if files.length - currentIndex > 1}
-                  <div class="card-underlay under-1"></div>
-                {/if}
-              {/if}
-
-              <div 
-                class="image-card glass-panel {swipeState} {mode}"
-                style="animation: {swipeState === 'keep' ? 'swipe-right-out 0.45s forwards' : swipeState === 'trash' ? 'swipe-left-out 0.45s forwards' : swipeState === 'star' ? 'swipe-up-out 0.35s forwards' : 'none'}"
-              >
-                <!-- Indicator overlays (Swipe Mode only) -->
-                {#if mode === 'swipe'}
-                  <div class="swipe-overlay keep {swipeState === 'keep' ? 'show' : ''}">KEEP</div>
-                  <div class="swipe-overlay trash {swipeState === 'trash' ? 'show' : ''}">TRASH</div>
-                  <div class="swipe-overlay star {swipeState === 'star' ? 'show' : ''}">STARRED</div>
-                {/if}
-
-                <!-- Image view container -->
-                <div 
-                  class="image-viewport"
-                  on:mousemove={handleMouseMove}
-                  on:dblclick={toggleZoom}
-                  style="cursor: {isZoomed ? 'zoom-out' : 'zoom-in'}"
-                >
-                  {#if previewLoading}
-                    <div class="viewport-loader">
-                      <div class="spinner"></div>
+            {#if mode === 'compare'}
+              <div class="compare-grid columns-{compareIndices.length}">
+                {#each compareIndices as idx}
+                  {@const file = files[idx]}
+                  {@const url = fetchPreviewUrl(idx)}
+                  <div class="compare-pane glass-panel">
+                    <div 
+                      class="compare-viewport"
+                      on:mousemove={handleMouseMoveCompare}
+                      on:dblclick={toggleZoom}
+                      style="cursor: {isZoomed ? 'zoom-out' : 'zoom-in'}"
+                    >
+                      {#if url}
+                        <img 
+                          src={url} 
+                          alt="RAW Preview" 
+                          class="compare-img {isZoomed ? 'zoomed' : ''}"
+                          style="transform-origin: {compareMouseX}% {compareMouseY}%;"
+                        />
+                      {:else}
+                        <div class="no-preview">No Preview Available</div>
+                      {/if}
+                      
+                      <!-- Filename badge -->
+                      <div class="compare-filename">{file.file_name}</div>
                     </div>
-                  {/if}
 
-                  {#if currentPreviewUrl}
-                    <img 
-                      src={currentPreviewUrl} 
-                      alt="RAW Preview" 
-                      class="preview-img {isZoomed ? 'zoomed' : ''}"
-                      style="transform-origin: {mouseX}% {mouseY}%;"
-                    />
-                  {:else}
-                    <div class="no-preview">No Preview Available</div>
-                  {/if}
-
-                  <!-- Subtle zoom exit hint -->
-                  {#if isZoomed}
+                    <!-- Compare pane actions overlay -->
+                    <div class="compare-pane-actions">
+                      <button 
+                        class="comp-act-btn keep {keepList.has(file.file_path) ? 'active' : ''}" 
+                        on:click={() => toggleCompareKeep(file.file_path)}
+                      >
+                        Keep {keepList.has(file.file_path) ? '✓' : ''}
+                      </button>
+                      <button 
+                        class="comp-act-btn star {starList.has(file.file_path) ? 'active' : ''}" 
+                        on:click={() => toggleCompareStar(file.file_path)}
+                      >
+                        Star {starList.has(file.file_path) ? '★' : '☆'}
+                      </button>
+                      <button 
+                        class="comp-act-btn trash {trashList.has(file.file_path) ? 'active' : ''}" 
+                        on:click={() => toggleCompareTrash(file.file_path)}
+                      >
+                        Trash {trashList.has(file.file_path) ? '✗' : ''}
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else if mode === 'grid'}
+              {#if isZoomed}
+                <!-- Zoom view of the active image while in Grid Mode -->
+                <div class="image-card glass-panel gallery">
+                  <div 
+                    class="image-viewport"
+                    on:mousemove={handleMouseMove}
+                    on:dblclick={toggleZoom}
+                    style="cursor: zoom-out"
+                  >
+                    {#if currentPreviewUrl}
+                      <img 
+                        src={currentPreviewUrl} 
+                        alt="RAW Preview" 
+                        class="preview-img zoomed"
+                        style="transform-origin: {mouseX}% {mouseY}%;"
+                      />
+                    {:else}
+                      <div class="no-preview">No Preview Available</div>
+                    {/if}
                     <div class="zoom-hint">SPACE — exit zoom</div>
+                  </div>
+                </div>
+              {:else}
+                <div class="grid-layout">
+                  {#each files as file, idx}
+                    <div 
+                      class="grid-card glass-panel {currentIndex === idx ? 'active' : ''}" 
+                      on:click={() => jumpToImage(idx)} 
+                      on:dblclick={() => { jumpToImage(idx); mode = 'gallery'; }}
+                    >
+                      <div class="grid-thumb-container">
+                        <img src={fetchPreviewUrl(idx)} alt={file.file_name} class="grid-thumb" loading="lazy" />
+                        <div class="grid-card-badges">
+                          {#if keepList.has(file.file_path)}
+                            <span class="grid-badge keep">✓</span>
+                          {/if}
+                          {#if trashList.has(file.file_path)}
+                            <span class="grid-badge trash">✗</span>
+                          {/if}
+                          {#if starList.has(file.file_path)}
+                            <span class="grid-badge star">★</span>
+                          {/if}
+                        </div>
+                      </div>
+                      <div class="grid-card-info">
+                        <span class="grid-filename">{file.file_name}</span>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {:else}
+              <div class="card-stack {mode}">
+                {#if mode === 'swipe'}
+                  <!-- Physical photo stack background layers -->
+                  {#if files.length - currentIndex > 2}
+                    <div class="card-underlay under-2"></div>
+                  {/if}
+                  {#if files.length - currentIndex > 1}
+                    <div class="card-underlay under-1"></div>
+                  {/if}
+                {/if}
+
+                <div 
+                  class="image-card glass-panel {swipeState} {mode}"
+                  style="animation: {swipeState === 'keep' ? 'swipe-right-out 0.45s forwards' : swipeState === 'trash' ? 'swipe-left-out 0.45s forwards' : swipeState === 'star' ? 'swipe-up-out 0.35s forwards' : 'none'}"
+                >
+                  <!-- Indicator overlays (Swipe Mode only) -->
+                  {#if mode === 'swipe'}
+                    <div class="swipe-overlay keep {swipeState === 'keep' ? 'show' : ''}">KEEP</div>
+                    <div class="swipe-overlay trash {swipeState === 'trash' ? 'show' : ''}">TRASH</div>
+                    <div class="swipe-overlay star {swipeState === 'star' ? 'show' : ''}">STARRED</div>
                   {/if}
 
+                  <!-- Image view container -->
+                  <div 
+                    class="image-viewport"
+                    on:mousemove={handleMouseMove}
+                    on:dblclick={toggleZoom}
+                    style="cursor: {isZoomed ? 'zoom-out' : 'zoom-in'}"
+                  >
+                    {#if previewLoading}
+                      <div class="viewport-loader">
+                        <div class="spinner"></div>
+                      </div>
+                    {/if}
+
+                    {#if currentPreviewUrl}
+                      <img 
+                        src={currentPreviewUrl} 
+                        alt="RAW Preview" 
+                        class="preview-img {isZoomed ? 'zoomed' : ''}"
+                        style="transform-origin: {mouseX}% {mouseY}%;"
+                      />
+                    {:else}
+                      <div class="no-preview">No Preview Available</div>
+                    {/if}
+
+                    <!-- Subtle zoom exit hint -->
+                    {#if isZoomed}
+                      <div class="zoom-hint">SPACE — exit zoom</div>
+                    {/if}
+
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <!-- Manual Navigation Overlays (Active during Browse Mode) -->
-            {#if mode === 'gallery'}
-              <button class="nav-arrow left" on:click={prevImage} disabled={currentIndex === 0}>‹</button>
-              <button class="nav-arrow right" on:click={nextImage} disabled={currentIndex === files.length - 1}>›</button>
+              <!-- Manual Navigation Overlays (Active during Browse Mode) -->
+              {#if mode === 'gallery'}
+                <button class="nav-arrow left" on:click={prevImage} disabled={currentIndex === 0}>‹</button>
+                <button class="nav-arrow right" on:click={nextImage} disabled={currentIndex === files.length - 1}>›</button>
+              {/if}
+
+              <!-- Floating mechanical keyboard visualizer dock -->
+              <div class="keyboard-helper-dock glass-panel">
+                <div class="dock-key-item">
+                  <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd>
+                  <span class="dock-key-label">{mode === 'swipe' ? 'Trash' : 'Prev'}</span>
+                </div>
+                <div class="dock-key-item">
+                  <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd>
+                  <span class="dock-key-label">Star</span>
+                </div>
+                <div class="dock-key-item">
+                  <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd>
+                  <span class="dock-key-label">{mode === 'swipe' ? 'Keep' : 'Next'}</span>
+                </div>
+                <div class="dock-key-item">
+                  <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd>
+                  <span class="dock-key-label">Zoom</span>
+                </div>
+              </div>
             {/if}
-
-            <!-- Floating mechanical keyboard visualizer dock -->
-            <div class="keyboard-helper-dock glass-panel">
-              <div class="dock-key-item">
-                <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd>
-                <span class="dock-key-label">{mode === 'swipe' ? 'Trash' : 'Prev'}</span>
-              </div>
-              <div class="dock-key-item">
-                <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd>
-                <span class="dock-key-label">Star</span>
-              </div>
-              <div class="dock-key-item">
-                <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd>
-                <span class="dock-key-label">{mode === 'swipe' ? 'Keep' : 'Next'}</span>
-              </div>
-              <div class="dock-key-item">
-                <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd>
-                <span class="dock-key-label">Zoom</span>
-              </div>
-            </div>
 
           </div>
 
           <!-- Bottom EXIF Metadata readouts -->
           <footer class="exif-panel glass-panel">
+            <div class="histogram-container">
+              <svg viewBox="0 0 200 80" class="histogram-svg">
+                <line x1="50" y1="0" x2="50" y2="80" stroke="rgba(255,255,255,0.05)" />
+                <line x1="100" y1="0" x2="100" y2="80" stroke="rgba(255,255,255,0.05)" />
+                <line x1="150" y1="0" x2="150" y2="80" stroke="rgba(255,255,255,0.05)" />
+                
+                <path d={rPath} fill="rgba(239, 68, 68, 0.12)" stroke="rgb(239, 68, 68)" stroke-width="1" />
+                <path d={gPath} fill="rgba(16, 185, 129, 0.12)" stroke="rgb(16, 185, 129)" stroke-width="1" />
+                <path d={bPath} fill="rgba(59, 130, 246, 0.12)" stroke="rgb(59, 130, 246)" stroke-width="1" />
+                <path d={lumaPath} fill="rgba(255, 255, 255, 0.08)" stroke="rgb(255, 255, 255)" stroke-width="1.5" />
+              </svg>
+            </div>
+            <div class="exif-divider"></div>
             <div class="exif-item">
               <span class="exif-label">CAMERA</span>
               <span class="exif-val">{files[currentIndex]?.camera_make || 'N/A'} {files[currentIndex]?.camera_model || ''}</span>
@@ -1356,6 +1624,12 @@
           <!-- Bottom Action Confirmation -->
           <div class="summary-actions-bar">
             <button class="back-btn" on:click={() => state = 'culling'}>Go Back & Review</button>
+            
+            <label class="xmp-toggle-label">
+              <input type="checkbox" bind:checked={exportXmp} />
+              <span>Write XMP sidecars (leave files in place)</span>
+            </label>
+
             <button class="glow-btn confirm-btn" on:click={confirmCulling}>
               Apply — {keepList.size} keep · {starList.size} star · {trashList.size} trash
             </button>
@@ -1369,9 +1643,14 @@
           <h1 class="complete-heading">All Actions Applied!</h1>
           <p class="complete-desc">
             Your culling session is complete.<br/>
-            Kept photos → <code>/Selected_to_Edit</code><br/>
-            Starred photos → <code>/Starred</code><br/>
-            Trashed photos → OS Recycle Bin (recoverable)
+            {#if exportXmp}
+              XMP metadata files written to original folder.<br/>
+              Original files were left in place.
+            {:else}
+              Kept photos → <code>/Selected_to_Edit</code><br/>
+              Starred photos → <code>/Starred</code><br/>
+              Trashed photos → OS Recycle Bin (recoverable)
+            {/if}
           </p>
           <div class="complete-buttons">
             <button class="glow-btn" on:click={startNewSession}>Cull Another Folder</button>
@@ -1382,6 +1661,21 @@
     </div>
 
   </main>
+
+  {#if contextMenuVisible && contextMenuFile}
+    <div 
+      class="custom-context-menu glass-panel" 
+      style="top: {contextMenuY}px; left: {contextMenuX}px;"
+      on:click|stopPropagation
+    >
+      <button class="context-menu-item" on:click={() => openInLightroom(contextMenuFile.file_path)}>
+        📸 Open in Lightroom
+      </button>
+      <button class="context-menu-item" on:click={() => revealInFinder(contextMenuFile.file_path)}>
+        📂 Reveal in Finder
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -2386,11 +2680,20 @@
   }
 
   .file-list-title {
-    padding: 16px 20px 8px;
+    padding: 16px 20px 2px;
     font-size: 11px;
     font-weight: 700;
-    color: hsl(var(--text-muted));
+    color: hsl(var(--text-primary));
     letter-spacing: 0.05em;
+  }
+
+  .file-list-subtitle {
+    padding: 0 20px 8px;
+    font-size: 9px;
+    font-weight: 600;
+    color: hsl(var(--accent-amber) / 0.85);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
   }
 
   .file-list {
@@ -2465,4 +2768,182 @@
   .item-badge.keep { background: hsl(var(--accent-keep) / 0.2); color: hsl(var(--accent-keep)); }
   .item-badge.trash { background: hsl(var(--accent-trash) / 0.2); color: hsl(var(--accent-trash)); }
   .item-badge.star { background: hsl(var(--accent-star) / 0.2); color: hsl(var(--accent-star)); }
+
+  /* Context Menu Styles */
+  .custom-context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 180px;
+    border-radius: 8px;
+    padding: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    background: hsl(var(--bg-card) / 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(16px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: hsl(var(--text-secondary));
+    border-radius: 5px;
+    transition: all 0.12s ease;
+    text-align: left;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .context-menu-item:hover {
+    background: hsl(var(--bg-input));
+    color: hsl(var(--text-primary));
+  }
+
+  /* Histogram Styles */
+  .histogram-container {
+    width: 140px;
+    height: 56px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid hsl(var(--border-muted));
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .histogram-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Grid View Styles */
+  .grid-layout {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-auto-rows: min-content;
+    gap: 16px;
+    overflow-y: auto;
+    padding: 10px 10px 80px 10px;
+    box-sizing: border-box;
+  }
+
+  .grid-card {
+    display: flex;
+    flex-direction: column;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid hsl(var(--border-muted));
+    background: hsl(var(--bg-card) / 0.5);
+    aspect-ratio: 1 / 1;
+    position: relative;
+    min-height: 0;
+  }
+
+  .grid-card:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--accent-amber) / 0.5);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    background: hsl(var(--bg-card) / 0.8);
+  }
+
+  .grid-card.active {
+    border-color: hsl(var(--accent-amber));
+    box-shadow: 0 0 12px hsl(var(--accent-amber) / 0.3);
+    background: hsl(var(--bg-input) / 0.8);
+  }
+
+  .grid-thumb-container {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+
+  .grid-thumb {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+  }
+
+  .grid-card:hover .grid-thumb {
+    transform: scale(1.05);
+  }
+
+  .grid-card-badges {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    z-index: 5;
+  }
+
+  .grid-badge {
+    font-size: 10px;
+    font-weight: bold;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .grid-badge.keep {
+    background: hsl(var(--accent-keep));
+    color: #fff;
+  }
+
+  .grid-badge.trash {
+    background: hsl(var(--accent-trash));
+    color: #fff;
+  }
+
+  .grid-badge.star {
+    background: hsl(var(--accent-star));
+    color: #000;
+  }
+
+  .grid-card-info {
+    padding: 8px 10px;
+    background: hsl(var(--bg-darker) / 0.8);
+    border-top: 1px solid hsl(var(--border-muted));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .grid-filename {
+    font-size: 11px;
+    font-weight: 500;
+    color: hsl(var(--text-secondary));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    text-align: center;
+  }
 </style>

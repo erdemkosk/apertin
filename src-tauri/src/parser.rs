@@ -726,6 +726,19 @@ pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
             // Extract metadata from the embedded JPEG preview (bulletproof fallback)
             extract_metadata_from_embedded_jpeg(&mmap, jpeg_offset, jpeg_len, &mut meta);
         }
+    } else if ext == "heic" || ext == "heif" {
+        // Standalone HEIC — the file itself is the displayable image (supported natively on macOS WebView)
+        meta.preview_offset = 0;
+        meta.preview_length = mmap.len() as u32;
+
+        // Fast EXIF scan inside the HEIC file
+        if let Some(pos) = mmap[..std::cmp::min(mmap.len(), 1_048_576)].windows(6).position(|w| w == b"Exif\0\0") {
+            let exif_start = pos + 6;
+            if exif_start < mmap.len() {
+                parse_tiff_bytes(&mmap[exif_start..], &mut meta, false);
+            }
+        }
+        return Ok(meta);
     } else {
         // Assume TIFF-based (ARW, NEF, CR2, DNG, etc.)
         parse_tiff_bytes(&mmap, &mut meta, true);

@@ -218,6 +218,7 @@ fn scan_directory(dir_path: String) -> Result<Vec<RawMetadata>, String> {
                 if matches!(
                     ext_lower.as_str(),
                     "arw" | "nef" | "cr2" | "cr3" | "raf" | "dng"
+                    | "orf" | "rw2" | "pef" | "heic" | "heif"
                     | "jpg" | "jpeg" | "png"
                 ) {
                     file_paths.push(file_path.to_string_lossy().into_owned());
@@ -253,63 +254,121 @@ fn get_raw_preview(path: String, offset: u32, length: u32) -> Result<Vec<u8>, St
 /// - keep_list  → moved to `Selected_to_Edit/` in the same folder
 /// - star_list  → moved to `Starred/` in the same folder (overrides keep/trash)
 /// - trash_list → sent to the OS trash (macOS Trash / Windows Recycle Bin / Linux ~/.Trash)
+fn write_xmp_sidecar(file_path_str: &str, rating: u32, label: &str) -> Result<(), String> {
+    let path = Path::new(file_path_str);
+    if !path.exists() {
+        return Ok(());
+    }
+    let parent = path.parent().ok_or("Invalid file path")?;
+    let file_stem = path.file_stem().ok_or("Invalid file stem")?.to_string_lossy();
+    let xmp_path = parent.join(format!("{}.xmp", file_stem));
+
+    let xmp_content = format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+        xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+      <xmp:Rating>{}</xmp:Rating>
+      <xmp:Label>{}</xmp:Label>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"#,
+        rating, label
+    );
+
+    fs::write(xmp_path, xmp_content)
+        .map_err(|e| format!("Failed to write XMP for '{}': {}", file_path_str, e))?;
+    Ok(())
+}
+
+/// Applies all culling decisions:
+/// - If export_xmp is true, writes standard .xmp sidecars with ratings and labels.
+/// - If export_xmp is false, performs physical folder moves and trashing.
 #[tauri::command]
 fn execute_culling_actions(
     keep_list: Vec<String>,
     trash_list: Vec<String>,
     star_list: Vec<String>,
+    export_xmp: bool,
 ) -> Result<(), String> {
-    // Starred files override keep and trash: build a fast lookup set
-    let star_set: std::collections::HashSet<&str> =
-        star_list.iter().map(|s| s.as_str()).collect();
+    if export_xmp {
+        // Starred files override keep and trash: build a fast lookup set
+        let star_set: std::collections::HashSet<&str> =
+            star_list.iter().map(|s| s.as_str()).collect();
 
-    // Keep → Selected_to_Edit/
-    for file_str in &keep_list {
-        if star_set.contains(file_str.as_str()) {
-            continue; // star takes precedence
+        // Starred -> Rating 5
+        for file_str in &star_list {
+            write_xmp_sidecar(file_str, 5, "")?;
         }
-        let file_path = Path::new(file_str);
-        if !file_path.exists() {
-            continue;
+
+        // Kept -> Rating 3
+        for file_str in &keep_list {
+            if !star_set.contains(file_str.as_str()) {
+                write_xmp_sidecar(file_str, 3, "")?;
+            }
         }
-        let parent = file_path.parent().ok_or("Invalid file path")?;
-        let target_dir = parent.join("Selected_to_Edit");
-        fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("Cannot create Selected_to_Edit: {}", e))?;
-        let file_name = file_path.file_name().ok_or("Invalid file name")?;
-        fs::rename(file_path, target_dir.join(file_name))
-            .map_err(|e| format!("Failed to move '{}': {}", file_str, e))?;
+
+        // Trashed -> Rating 1, Label Red
+        for file_str in &trash_list {
+            if !star_set.contains(file_str.as_str()) {
+                write_xmp_sidecar(file_str, 1, "Red")?;
+            }
+        }
+
+        Ok(())
+    } else {
+        // Starred files override keep and trash: build a fast lookup set
+        let star_set: std::collections::HashSet<&str> =
+            star_list.iter().map(|s| s.as_str()).collect();
+
+        // Keep → Selected_to_Edit/
+        for file_str in &keep_list {
+            if star_set.contains(file_str.as_str()) {
+                continue; // star takes precedence
+            }
+            let file_path = Path::new(file_str);
+            if !file_path.exists() {
+                continue;
+            }
+            let parent = file_path.parent().ok_or("Invalid file path")?;
+            let target_dir = parent.join("Selected_to_Edit");
+            fs::create_dir_all(&target_dir)
+                .map_err(|e| format!("Cannot create Selected_to_Edit: {}", e))?;
+            let file_name = file_path.file_name().ok_or("Invalid file name")?;
+            fs::rename(file_path, target_dir.join(file_name))
+                .map_err(|e| format!("Failed to move '{}': {}", file_str, e))?;
+        }
+
+        // Star → Starred/
+        for file_str in &star_list {
+            let file_path = Path::new(file_str);
+            if !file_path.exists() {
+                continue;
+            }
+            let parent = file_path.parent().ok_or("Invalid file path")?;
+            let target_dir = parent.join("Starred");
+            fs::create_dir_all(&target_dir)
+                .map_err(|e| format!("Cannot create Starred directory: {}", e))?;
+            let file_name = file_path.file_name().ok_or("Invalid file name")?;
+            fs::rename(file_path, target_dir.join(file_name))
+                .map_err(|e| format!("Failed to move starred '{}': {}", file_str, e))?;
+        }
+
+        // Trash → OS trash (recoverable)
+        for file_str in &trash_list {
+            if star_set.contains(file_str.as_str()) {
+                continue; // star takes precedence
+            }
+            let file_path = Path::new(file_str);
+            if !file_path.exists() {
+                continue;
+            }
+            trash::delete(file_path)
+                .map_err(|e| format!("Failed to trash '{}': {}", file_str, e))?;
+        }
+
+        Ok(())
     }
-
-    // Star → Starred/
-    for file_str in &star_list {
-        let file_path = Path::new(file_str);
-        if !file_path.exists() {
-            continue;
-        }
-        let parent = file_path.parent().ok_or("Invalid file path")?;
-        let target_dir = parent.join("Starred");
-        fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("Cannot create Starred directory: {}", e))?;
-        let file_name = file_path.file_name().ok_or("Invalid file name")?;
-        fs::rename(file_path, target_dir.join(file_name))
-            .map_err(|e| format!("Failed to move starred '{}': {}", file_str, e))?;
-    }
-
-    // Trash → OS trash (recoverable)
-    for file_str in &trash_list {
-        if star_set.contains(file_str.as_str()) {
-            continue; // star takes precedence
-        }
-        let file_path = Path::new(file_str);
-        if !file_path.exists() {
-            continue;
-        }
-        trash::delete(file_path)
-            .map_err(|e| format!("Failed to trash '{}': {}", file_str, e))?;
-    }
-
-    Ok(())
 }
 
 // ── Folder picker ──────────────────────────────────────────────────────────
@@ -327,6 +386,58 @@ fn get_initial_path(state: tauri::State<InitialPath>) -> Option<String> {
     state.0.lock().unwrap().clone()
 }
 
+#[tauri::command]
+fn open_in_lightroom(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(&["-a", "Adobe Lightroom Classic", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to launch Lightroom: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let lr_path = r"C:\Program Files\Adobe\Adobe Lightroom Classic\Lightroom.exe";
+        if std::path::Path::new(lr_path).exists() {
+            std::process::Command::new(lr_path)
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch Lightroom: {}", e))?;
+        } else {
+            open::that(&path).map_err(|e| format!("Failed to open: {}", e))?;
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        open::that(&path).map_err(|e| format!("Failed to open: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(&["-R", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to reveal in Finder: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,\"{}\"", path))
+            .spawn()
+            .map_err(|e| format!("Failed to reveal in Explorer: {}", e))?;
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new("."));
+        open::that(parent).map_err(|e| format!("Failed to open parent: {}", e))?;
+    }
+    Ok(())
+}
+
 fn main() {
     // Capture CLI argument: first arg that is an existing directory
     let initial_path: Option<String> = std::env::args()
@@ -338,6 +449,63 @@ fn main() {
 
     tauri::Builder::default()
         .manage(InitialPath(Mutex::new(initial_path)))
+        .register_uri_scheme_protocol("apertin-preview", move |_app, request| {
+            let uri = request.uri();
+            let query = uri.query().unwrap_or("");
+
+            // Parse parameters
+            let mut file_path = String::new();
+            let mut offset = 0u64;
+            let mut length = 0u64;
+
+            for (key, val) in url::form_urlencoded::parse(query.as_bytes()) {
+                match key.as_ref() {
+                    "path" => file_path = val.into_owned(),
+                    "offset" => offset = val.parse().unwrap_or(0),
+                    "length" => length = val.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+
+            if file_path.is_empty() || length == 0 {
+                return http::Response::builder()
+                    .status(http::StatusCode::BAD_REQUEST)
+                    .body(Vec::new())
+                    .unwrap();
+            }
+
+            // Read specified slice from file
+            match std::fs::File::open(&file_path) {
+                Ok(mut file) => {
+                    use std::io::{Read, Seek, SeekFrom};
+                    if file.seek(SeekFrom::Start(offset)).is_ok() {
+                        let mut buffer = vec![0u8; length as usize];
+                        if file.read_exact(&mut buffer).is_ok() {
+                            let ext_lower = file_path.to_lowercase();
+                            let mime_type = if ext_lower.ends_with(".png") {
+                                "image/png"
+                            } else if ext_lower.ends_with(".heic") || ext_lower.ends_with(".heif") {
+                                "image/heic"
+                            } else {
+                                "image/jpeg"
+                            };
+                            return http::Response::builder()
+                                .status(http::StatusCode::OK)
+                                .header("Content-Type", mime_type)
+                                .header("Access-Control-Allow-Origin", "*")
+                                .body(buffer)
+                                .unwrap();
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+
+            http::Response::builder()
+                .status(http::StatusCode::NOT_FOUND)
+                .body(Vec::new())
+                .unwrap()
+        })
         .invoke_handler(tauri::generate_handler![
             scan_directory,
             get_raw_preview,
@@ -349,6 +517,8 @@ fn main() {
             clear_session,
             analyze_groups,
             open_external_url,
+            open_in_lightroom,
+            reveal_in_finder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

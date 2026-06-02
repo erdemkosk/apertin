@@ -16,6 +16,8 @@ rfd = "0.14"
 trash = "3"
 open = "5"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+url = "2.5"
+http = "1"
 
 [profile.release]
 panic = "abort"

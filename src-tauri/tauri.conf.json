@@ -1,6 +1,6 @@
 {
   "productName": "Apertin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.apertin.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -35,19 +35,36 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["arw", "nef", "cr2", "cr3", "raf", "dng"],
+        "ext": [
+          "arw",
+          "nef",
+          "cr2",
+          "cr3",
+          "raf",
+          "dng",
+          "orf",
+          "rw2",
+          "pef",
+          "heic",
+          "heif"
+        ],
         "name": "RAW Image",
         "description": "RAW Camera Image",
         "role": "Viewer"
       },
       {
-        "ext": ["jpg", "jpeg"],
+        "ext": [
+          "jpg",
+          "jpeg"
+        ],
         "name": "JPEG Image",
         "description": "JPEG Camera Image",
         "role": "Viewer"
       },
       {
-        "ext": ["png"],
+        "ext": [
+          "png"
+        ],
         "name": "PNG Image",
         "description": "PNG Image",
         "role": "Viewer"
