@@ -23,7 +23,7 @@
   } catch (_) {}
 
   // ── Update checker ────────────────────────────────────────────────────────
-  const GITHUB_REPO = 'erdemkosk/apertinder';
+  const GITHUB_REPO = 'erdemkosk/apertin';
   let updateAvailable = false;
   let latestVersion = '';
   let updateCheckDone = false;

@@ -156,7 +156,7 @@ xcode-select --install
 ### Clone & Run
 
 ```bash
-git clone https://github.com/mek/apertin.git
+git clone https://github.com/erdemkosk/apertin.git
 cd apertin
 
 npm install
