@@ -56,6 +56,18 @@
     }
   }
 
+  function openUrl(url) {
+    if (!url) return;
+    if (invoke) {
+      invoke('open_external_url', { url }).catch(err => {
+        console.error("Failed to open URL via Tauri:", err);
+        window.open(url, '_blank');
+      });
+    } else {
+      window.open(url, '_blank');
+    }
+  }
+
   // App States
   let state = 'welcome'; // 'welcome' | 'culling' | 'summary' | 'complete'
   let mode = 'gallery'; // 'gallery' | 'swipe' | 'compare'
@@ -963,7 +975,7 @@
           {#if updateAvailable}
             <button
               class="update-link"
-              on:click={() => invoke && invoke('open_external_url', { url: updateReleaseUrl })}
+              on:click={() => openUrl(updateReleaseUrl)}
             >
               Download v{latestVersion} →
             </button>
