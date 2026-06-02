@@ -39,7 +39,12 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | 🚀 **Zero-decode preview extraction** | Reads the embedded JPEG directly from RAW binary — no full decode needed |
 | 🔥 **Swipe Mode** | Keyboard-driven keep/trash workflow with animated card transitions |
 | 👁️ **Browse Mode** | Classic gallery browser with instant prev/next navigation |
-| 🔍 **Focus Check Zoom** | Press `Space` to enter pixel-level zoom mode across all images |
+| 📂 **Grid Mode** | Full-screen interactive lazy-loaded thumbnail view of files with status badges |
+| 📊 **Split Compare View** | Compare up to 4 images side-by-side with synchronized zoom/pan |
+| 📈 **RGB & Luma Histogram** | Live-rendered high-performance exposure graphs inside EXIF panel |
+| ⚡ **XMP Sidecar Export** | Toggle to write ratings/reject tags directly to `.xmp` files, leaving originals in place |
+| 🎨 **Adobe Lightroom Link** | Right-click sidebar files to reveal in Finder or open directly in Lightroom Classic |
+| 🔍 **Focus Check Zoom** | Press `Space` to enter pixel-level zoom mode across all images (including inside Grid Mode) |
 | ⭐ **Star Rating** | Mark hero shots with `↑` for selective editing |
 | 🔗 **Smart Grouping** | Automatically cluster burst shots and similar scenes before you cull |
 | 📊 **EXIF Sidebar** | Camera, lens, shutter, aperture, ISO, focal length at a glance |
@@ -62,6 +67,10 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | `.NEF` | Nikon |
 | `.RAF` | Fujifilm |
 | `.DNG` | Adobe / Leica / DJI |
+| `.ORF` | Olympus |
+| `.RW2` | Panasonic |
+| `.PEF` | Pentax |
+| `.HEIC` / `.HEIF` | iOS / Modern mobile |
 | `.JPG` / `.JPEG` | Any camera |
 | `.PNG` | Any source |
 
@@ -110,6 +119,13 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | `←` | Previous image |
 | `↑` | Toggle star |
 | `Space` | Toggle focus zoom |
+
+### Grid Mode
+| Key | Action |
+|---|---|
+| `Space` | Fullscreen sharpness zoom of selected thumbnail |
+| `Double Click` | Select thumbnail and switch to Browse Mode |
+| `Right Click` | Open file context menu (Lightroom / Finder Reveal) |
 
 ---
 
@@ -334,11 +350,11 @@ Apertin's UI is built around a single principle: **the photo should fill your vi
 
 - [ ] **Windows support** (HIDPI scaling + file association)
 - [ ] **Linux support** (GTK file dialog)  
-- [ ] **Collection view** — grid browse with zoom
+- [x] **Collection view** — grid browse with zoom
 - [ ] **Color label system** — reject / 1-star / 2-star / pick
 - [x] **Smart grouping** — pHash + complete-linkage clustering for burst and similar-scene detection
-- [ ] **XMP sidecar export** — write ratings back as metadata without moving files
-- [ ] **Lightroom Classic integration** — open Selected_to_Edit directly in catalog
+- [x] **XMP sidecar export** — write ratings back as metadata without moving files
+- [x] **Lightroom Classic integration** — open Selected_to_Edit directly in catalog
 
 ---
 
