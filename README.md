@@ -14,6 +14,10 @@
 
 > Crafted with ❤️ by [Mustafa Erdem Köşk](https://github.com/mek)
 
+<br/>
+
+![Apertin Demo](demo.gif)
+
 </div>
 
 ---
