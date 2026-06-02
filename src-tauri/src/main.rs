@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
+use tauri::Emitter;
 
 // Store initial path from CLI args (e.g. "Open With" on macOS)
 struct InitialPath(Mutex<Option<String>>);
@@ -60,6 +61,81 @@ fn clear_session(dir_path: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to clear session: {}", e))?;
     }
     Ok(())
+}
+
+// ── Similarity grouping ────────────────────────────────────────────────────
+
+/// Hamming distance between two 64-bit dHashes.
+fn hamming(a: u64, b: u64) -> u32 {
+    (a ^ b).count_ones()
+}
+
+/// Maximum Hamming distance to consider two photos "similar" (0-64).
+/// 10 ≈ 84% similarity — catches burst shots and same-scene variations.
+const DHASH_THRESHOLD: u32 = 10;
+
+#[derive(Debug, Clone, Serialize)]
+struct GroupProgress {
+    processed: usize,
+    total: usize,
+    /// Parallel array to file_paths: group id for each file, or null if ungrouped.
+    assignments: Vec<Option<usize>>,
+}
+
+/// Reads the largest embedded JPEG preview from a file and computes its dHash.
+fn dhash_for_file(file_path: &str) -> Option<u64> {
+    let file = File::open(file_path).ok()?;
+    let mmap = unsafe { memmap2::MmapOptions::new().map(&file).ok()? };
+    let (offset, length) = parser::scan_for_largest_jpeg(&mmap)?;
+    let jpeg = &mmap[offset as usize..(offset + length) as usize];
+    parser::compute_dhash(jpeg)
+}
+
+/// Analyses visual similarity between files using dHash and emits progressive
+/// `group-progress` events so the frontend can update the sidebar in real time.
+/// Returns the final group assignments (index → group id or null).
+#[tauri::command]
+fn analyze_groups(
+    app: tauri::AppHandle,
+    file_paths: Vec<String>,
+) -> Result<Vec<Option<usize>>, String> {
+    let total = file_paths.len();
+    let mut assignments: Vec<Option<usize>> = vec![None; total];
+    // One representative hash per group (group_id → hash)
+    let mut group_representatives: Vec<(usize, u64)> = Vec::new();
+    let mut next_group_id: usize = 0;
+
+    for (i, path) in file_paths.iter().enumerate() {
+        if let Some(hash) = dhash_for_file(path) {
+            let matched = group_representatives
+                .iter()
+                .find(|&&(_, gh)| hamming(hash, gh) <= DHASH_THRESHOLD)
+                .map(|&(gid, _)| gid);
+
+            if let Some(gid) = matched {
+                assignments[i] = Some(gid);
+            } else {
+                assignments[i] = Some(next_group_id);
+                group_representatives.push((next_group_id, hash));
+                next_group_id += 1;
+            }
+        }
+
+        // Emit progress every 5 files and on the final file
+        if (i + 1) % 5 == 0 || i + 1 == total {
+            app.emit(
+                "group-progress",
+                GroupProgress {
+                    processed: i + 1,
+                    total,
+                    assignments: assignments.clone(),
+                },
+            )
+            .ok();
+        }
+    }
+
+    Ok(assignments)
 }
 
 // ── File scanning ──────────────────────────────────────────────────────────
@@ -225,6 +301,7 @@ fn main() {
             save_session,
             load_session,
             clear_session,
+            analyze_groups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

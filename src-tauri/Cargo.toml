@@ -14,6 +14,7 @@ walkdir = "2.5"
 rayon = "1.10"
 rfd = "0.14"
 trash = "3"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 [profile.release]
 panic = "abort"

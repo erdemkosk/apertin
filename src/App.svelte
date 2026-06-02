@@ -64,6 +64,66 @@
   // Map of Path -> Blob URL for summary reviews
   let summaryPreviews = {};
 
+  // ── Similarity grouping ───────────────────────────────────────────────────
+
+  // Parallel array to `files`: group id per file (null = not yet analysed / unique)
+  let groupAssignments = []; // number | null  per index
+  let groupAnalyzing = false;
+  let groupProgress = { processed: 0, total: 0 };
+  let groupUnlistener = null; // cleanup fn for the event listener
+
+  // Derived: how many files share each group id (groups of 1 = unique, hide header)
+  $: groupSizes = (() => {
+    const sizes = {};
+    for (const gid of groupAssignments) {
+      if (gid != null) sizes[gid] = (sizes[gid] || 0) + 1;
+    }
+    return sizes;
+  })();
+
+  // 12 distinct accent colors for group highlights
+  const GROUP_COLORS = [
+    '#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444',
+    '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
+    '#6366f1','#a78bfa',
+  ];
+
+  function groupColor(gid) {
+    if (gid == null) return 'transparent';
+    return GROUP_COLORS[gid % GROUP_COLORS.length];
+  }
+
+  async function analyzeGroups() {
+    if (!invoke || files.length === 0 || groupAnalyzing) return;
+
+    groupAnalyzing = true;
+    groupProgress = { processed: 0, total: files.length };
+    groupAssignments = new Array(files.length).fill(null);
+
+    // Subscribe to incremental progress events from Rust
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      if (groupUnlistener) groupUnlistener();
+      groupUnlistener = await listen('group-progress', (event) => {
+        const { processed, total, assignments } = event.payload;
+        groupProgress = { processed, total };
+        groupAssignments = assignments;
+      });
+    } catch (_) {}
+
+    try {
+      const finalAssignments = await invoke('analyze_groups', {
+        filePaths: files.map(f => f.file_path),
+      });
+      groupAssignments = finalAssignments;
+    } catch (e) {
+      console.error('Group analysis failed:', e);
+    } finally {
+      groupAnalyzing = false;
+      if (groupUnlistener) { groupUnlistener(); groupUnlistener = null; }
+    }
+  }
+
   // ── Session persistence ──────────────────────────────────────────────────
 
   async function saveSession() {
@@ -605,6 +665,10 @@
     keepList = new Set();
     trashList = new Set();
     starList = new Set();
+    groupAssignments = [];
+    groupAnalyzing = false;
+    groupProgress = { processed: 0, total: 0 };
+    if (groupUnlistener) { groupUnlistener(); groupUnlistener = null; }
     state = 'welcome';
   }
 
@@ -686,12 +750,48 @@
         </div>
       </div>
 
+      <!-- Similarity grouping -->
+      <div class="group-analysis-row">
+        <button
+          class="group-btn {groupAnalyzing ? 'analyzing' : ''}"
+          on:click={analyzeGroups}
+          disabled={groupAnalyzing || files.length === 0}
+          title="Analyses visual similarity using dHash and groups similar-looking photos"
+        >
+          {#if groupAnalyzing}
+            <span class="group-spinner"></span>
+            {groupProgress.processed}/{groupProgress.total}
+          {:else if groupAssignments.length > 0}
+            ⟳ Re-group Similar
+          {:else}
+            ⬡ Group Similar Photos
+          {/if}
+        </button>
+        {#if groupAssignments.length > 0 && !groupAnalyzing}
+          <span class="group-summary">
+            {Object.values(groupSizes).filter(s => s > 1).length} groups found
+          </span>
+        {/if}
+      </div>
+
       <!-- Gallery Index Slider -->
       <div class="file-list-title">FOLDER DIRECTORY</div>
       <div class="file-list">
         {#each files as file, idx}
-          <button 
-            class="file-item {currentIndex === idx ? 'active' : ''}"
+          {@const gid = groupAssignments[idx] ?? null}
+          {@const inGroup = gid != null && groupSizes[gid] > 1}
+          {@const isGroupFirst = inGroup && files.slice(0, idx).every((_, i) => groupAssignments[i] !== gid)}
+
+          {#if isGroupFirst}
+            <div class="group-header" style="--gc: {groupColor(gid)}">
+              <span class="group-dot"></span>
+              Group · {groupSizes[gid]} photos
+            </div>
+          {/if}
+
+          <button
+            class="file-item {currentIndex === idx ? 'active' : ''} {inGroup ? 'in-group' : ''}"
+            style={inGroup ? `--gc: ${groupColor(gid)}` : ''}
             on:click={() => jumpToImage(idx)}
           >
             <div class="file-info-left">
@@ -1172,6 +1272,96 @@
     background: hsl(var(--border-muted));
     margin: 0 4px;
   }
+
+  /* ── Similarity grouping ─────────────────────────────────────────────── */
+  .group-analysis-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0 8px;
+    border-bottom: 1px solid hsl(var(--border-muted));
+    margin-bottom: 6px;
+  }
+
+  .group-btn {
+    flex: 1;
+    background: hsl(var(--bg-input) / 0.6);
+    border: 1px solid hsl(var(--border-muted));
+    color: hsl(var(--text-secondary));
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+    letter-spacing: 0.02em;
+  }
+
+  .group-btn:hover:not(:disabled) {
+    background: hsl(var(--bg-input));
+    color: hsl(var(--text-primary));
+    border-color: hsl(var(--accent-amber) / 0.4);
+  }
+
+  .group-btn.analyzing {
+    color: hsl(var(--accent-amber));
+    border-color: hsl(var(--accent-amber) / 0.4);
+  }
+
+  .group-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .group-spinner {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border: 1.5px solid hsl(var(--accent-amber) / 0.3);
+    border-top-color: hsl(var(--accent-amber));
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .group-summary {
+    font-size: 10px;
+    color: hsl(var(--text-muted));
+    white-space: nowrap;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 2px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--gc, hsl(var(--text-muted)));
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 4px;
+  }
+
+  .group-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--gc, hsl(var(--text-muted)));
+    flex-shrink: 0;
+  }
+
+  .file-item.in-group {
+    border-left: 2px solid var(--gc, transparent);
+    padding-left: 6px;
+  }
+
+  /* ── /Similarity grouping ─────────────────────────────────────────────── */
 
   .brand-version {
     font-size: 10px;

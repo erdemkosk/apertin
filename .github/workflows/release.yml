@@ -60,7 +60,10 @@ jobs:
       - name: Build & publish Tauri release
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+          # DEPLOY_TOKEN = GitHub PAT with Contents:write.
+          # Falls back to the built-in Actions token (also has Contents:write
+          # thanks to the permissions block above) when DEPLOY_TOKEN is not set.
+          GITHUB_TOKEN: ${{ secrets.DEPLOY_TOKEN || github.token }}
           # ── macOS code-signing ─────────────────────────────────────────────
           # Signing is DISABLED until proper Apple Developer certs are ready.
           # To enable: uncomment the lines below and add the 6 secrets in

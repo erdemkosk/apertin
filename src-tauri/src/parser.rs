@@ -426,6 +426,27 @@ pub fn parse_isobmff(
     }
 }
 
+/// Computes a 64-bit dHash (difference hash) from raw JPEG bytes.
+/// Resize to 9×8 grayscale, compare adjacent pixels left→right per row.
+/// Hamming distance ≤ 10 between two hashes → visually similar photos.
+pub fn compute_dhash(jpeg_bytes: &[u8]) -> Option<u64> {
+    let img = image::load_from_memory(jpeg_bytes).ok()?;
+    let small = img.resize_exact(9, 8, image::imageops::FilterType::Nearest);
+    let gray = small.to_luma8();
+
+    let mut hash: u64 = 0;
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let left = gray.get_pixel(x, y)[0];
+            let right = gray.get_pixel(x + 1, y)[0];
+            if right > left {
+                hash |= 1u64 << (y * 8 + x);
+            }
+        }
+    }
+    Some(hash)
+}
+
 /// Scans PNG chunks for an `eXIf` chunk and parses the TIFF/EXIF data inside.
 pub fn parse_png_exif(data: &[u8], meta: &mut RawMetadata) {
     // PNG signature is 8 bytes; chunks start at offset 8.
