@@ -833,9 +833,12 @@
         <div class="brand-sub">
           Developed with ❤️ by Mustafa Erdem Köşk
           {#if updateAvailable}
-            <a class="update-link" href={updateReleaseUrl} target="_blank" rel="noreferrer">
+            <button
+              class="update-link"
+              on:click={() => invoke && invoke('open_external_url', { url: updateReleaseUrl })}
+            >
               Download v{latestVersion} →
-            </a>
+            </button>
           {:else}
             <button
               class="update-check-btn"
@@ -1594,8 +1597,11 @@
     font-weight: 600;
     color: hsl(var(--accent-amber));
     text-decoration: none;
-    padding: 1px 6px;
+    background: none;
     border: 1px solid hsl(var(--accent-amber) / 0.5);
+    cursor: pointer;
+    font-family: inherit;
+    padding: 1px 6px;
     border-radius: 4px;
   }
   .update-link:hover { background: hsl(var(--accent-amber) / 0.15); }

@@ -178,6 +178,12 @@ async fn analyze_groups(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+/// Opens a URL in the system's default browser (cross-platform).
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    open::that(url).map_err(|e| e.to_string())
+}
+
 // ── File scanning ──────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -342,6 +348,7 @@ fn main() {
             load_session,
             clear_session,
             analyze_groups,
+            open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
