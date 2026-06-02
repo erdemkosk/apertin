@@ -126,6 +126,30 @@
     return s;
   })();
 
+  // Re-order indices so all members of a group are rendered consecutively,
+  // anchored at the position of the earliest member in each group.
+  $: displayOrder = (() => {
+    const placed = new Set();
+    const order = [];
+    for (let i = 0; i < files.length; i++) {
+      if (placed.has(i)) continue;
+      const gid = groupAssignments[i] ?? null;
+      if (gid != null && (groupSizes[gid] ?? 1) > 1) {
+        // Insert all members of this group together
+        for (let j = i; j < files.length; j++) {
+          if (!placed.has(j) && groupAssignments[j] === gid) {
+            order.push(j);
+            placed.add(j);
+          }
+        }
+      } else {
+        order.push(i);
+        placed.add(i);
+      }
+    }
+    return order;
+  })();
+
   const GROUP_COLORS = [
     '#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444',
     '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
@@ -893,10 +917,11 @@
       <!-- Gallery Index Slider -->
       <div class="file-list-title">FOLDER DIRECTORY</div>
       <div class="file-list">
-        {#each files as file, idx}
+        {#each displayOrder as idx, pos}
+          {@const file = files[idx]}
           {@const gid = groupAssignments[idx] ?? null}
-          {@const inGroup = gid != null && groupSizes[gid] > 1}
-          {@const isGroupFirst = inGroup && files.slice(0, idx).every((_, i) => groupAssignments[i] !== gid)}
+          {@const inGroup = gid != null && (groupSizes[gid] ?? 1) > 1}
+          {@const isGroupFirst = inGroup && (pos === 0 || groupAssignments[displayOrder[pos - 1]] !== gid)}
 
           {#if isGroupFirst}
             <div class="group-header" style="--gc: {groupColor(gid)}">
