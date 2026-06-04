@@ -148,69 +148,13 @@ Apertin can automatically group similar photos before you start culling, so you 
 | 2 min | 2 minutes | Scene changes during a walk-around |
 | 5 min | 5 minutes | Different locations in the same session |
 
-**⬡ Visual similarity grouping** is powered by a Rust backend algorithm that analyses the pixel content of each photo's embedded preview thumbnail.
-
-### pHash algorithm (DCT-based perceptual hash)
-
-Each photo is reduced to a 64-bit fingerprint using the following pipeline:
-
-```
-Embedded JPEG thumbnail (first 2 MB of file, memory-mapped)
-        │
-        ▼
-  Resize to 32 × 32 (Triangle / bilinear filter)
-        │
-        ▼
-  Convert to grayscale (luma)
-        │
-        ▼
-  Separable 2-D DCT-II
-  (row-wise 1-D DCT, then column-wise 1-D DCT)
-        │
-        ▼
-  Extract top-left 8 × 8 low-frequency block
-  (these coefficients encode global scene structure —
-   noise, blur, and minor exposure changes live in the
-   high-frequency region that is discarded here)
-        │
-        ▼
-  64-bit hash: bit i = 1 if coeff[i] > median(all 64 coeffs)
-```
-
-Two hashes are compared with **Hamming distance** (number of differing bits out of 64). Lower distance = more visually similar.
+**⬡ Visual similarity grouping** is powered by a Rust backend algorithm that analyses the pixel content of each photo's embedded preview thumbnail using a DCT-based perceptual hash (pHash) and complete-linkage clustering.
 
 | Preset | Hamming ≤ | What it matches |
 |---|---|---|
 | Burst | 6 | Near-identical frames, only shutter timing differs |
 | Normal | 10 | Same scene with varying exposure, slight reframe |
 | Loose | 15 | Similar subject from a different angle |
-
-### Why pHash over dHash?
-
-The naïve approach — **dHash** (difference hash) — compares adjacent pixel brightness at 9×8 resolution. It is extremely sensitive to exposure changes, focus variance, and even minor reframing, which causes burst shots to be assigned different hashes and unrelated photos to accidentally collide.
-
-pHash's **DCT low-frequency coefficients** are robust because:
-- Exposure / brightness shifts are low-amplitude in the DC term (coeff[0,0]) and handled by the median normalisation
-- Noise and blur are high-frequency — they are discarded by taking only the 8×8 low-frequency block
-- Global scene composition (the actual "content") is captured in the 8×8 block regardless of minor photographic variations
-
-### Complete-linkage clustering (no bridge problem)
-
-Once all hashes are computed (in parallel via Rayon), they are clustered using **complete-linkage**:
-
-> A photo joins an existing group only if its Hamming distance to **every current member** of that group is within the threshold.
-
-This prevents the *bridge problem* that plagues single-linkage clustering:
-
-```
-Single-linkage (old):   A ≈ B  and  B ≈ C  →  A + B + C same group  ✗
-                        (even if A and C are completely different scenes)
-
-Complete-linkage (new): A ≈ B  and  B ≈ C  but  A ≇ C
-                        →  {A, B} and {C} are separate groups         ✓
-```
-
-Groups are anchored at the earliest member's position in the file list. All members are rendered consecutively in the sidebar, so you can immediately see the cluster and decide with a single keep/trash action.
 
 ---
 
