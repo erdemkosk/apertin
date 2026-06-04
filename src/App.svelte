@@ -79,6 +79,43 @@
   let compareIndices = [];
   let exportXmp = false;
 
+  let recentFolders = [];
+
+  function addRecentFolder(path) {
+    if (!path) return;
+    recentFolders = [path, ...recentFolders.filter(p => p !== path)].slice(0, 5);
+    localStorage.setItem('recent_folders', JSON.stringify(recentFolders));
+  }
+
+  function removeRecentFolder(path, event) {
+    if (event) event.stopPropagation();
+    recentFolders = recentFolders.filter(p => p !== path);
+    localStorage.setItem('recent_folders', JSON.stringify(recentFolders));
+  }
+
+  function openRecentFolder(path) {
+    dirPath = path;
+    startScan();
+  }
+
+  let bestFocusInGroup = {};
+  $: {
+    const best = {};
+    for (let i = 0; i < files.length; i++) {
+      const gid = groupAssignments[i];
+      if (gid != null && (groupSizes[gid] ?? 0) > 1) {
+        const file = files[i];
+        const score = file.sharpness ?? -1;
+        if (score >= 0) {
+          if (best[gid] === undefined || score > (files[best[gid]]?.sharpness ?? -1)) {
+            best[gid] = i;
+          }
+        }
+      }
+    }
+    bestFocusInGroup = best;
+  }
+
   // Context Menu State
   let contextMenuVisible = false;
   let contextMenuX = 0;
@@ -488,6 +525,7 @@
         } catch (_) { /* no session — start fresh */ }
       }
 
+      addRecentFolder(dirPath.trim());
       mode = 'gallery';
       state = 'culling';
     } catch (e) {
@@ -961,6 +999,16 @@
     window.focus();
     document.addEventListener('click', () => window.focus(), { passive: true });
 
+    // Load recent folders list
+    try {
+      const saved = localStorage.getItem('recent_folders');
+      if (saved) {
+        recentFolders = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn("Failed to load recent folders:", e);
+    }
+
     // Check for updates silently after a short delay
     setTimeout(() => checkForUpdates(true), 4000);
 
@@ -1130,6 +1178,9 @@
               <span class="file-name">{file.file_name}</span>
             </div>
             <div class="file-badges">
+              {#if bestFocusInGroup[gid] === idx}
+                <span class="item-badge focus-best" title="Best Focus in Group">🎯</span>
+              {/if}
               {#if keepList.has(file.file_path)}
                 <span class="item-badge keep">✓</span>
               {/if}
@@ -1269,6 +1320,26 @@
               </div>
             {/if}
           </div>
+          
+          {#if recentFolders.length > 0}
+            <div class="recent-folders-container">
+              <h3 class="recent-title">RECENT DIRECTORIES</h3>
+              <div class="recent-list">
+                {#each recentFolders as path}
+                  {@const folderName = path.split('/').pop() || path.split('\\').pop() || path}
+                  <button class="recent-item glass-panel" on:click={() => openRecentFolder(path)}>
+                    <div class="recent-info">
+                      <span class="recent-name">📁 {folderName}</span>
+                      <span class="recent-path" title={path}>{path}</span>
+                    </div>
+                    <button class="recent-remove" on:click={(e) => removeRecentFolder(path, e)} title="Remove from list">
+                      ×
+                    </button>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
           
           <div class="shortcuts-legend">
             <h3 class="legend-title">KEYBOARD SHORTCUTS</h3>
@@ -1413,6 +1484,9 @@
                           <div class="grid-thumb-container">
                             <img src={fetchPreviewUrl(idx)} alt={file.file_name} class="grid-thumb" loading="lazy" />
                             <div class="grid-card-badges">
+                              {#if bestFocusInGroup[groupAssignments[idx]] === idx}
+                                <span class="grid-badge focus-best" title="Best Focus in Group">🎯</span>
+                              {/if}
                               {#if keepList.has(file.file_path)}
                                 <span class="grid-badge keep">✓</span>
                               {/if}
@@ -1426,6 +1500,9 @@
                           </div>
                           <div class="grid-card-info">
                             <span class="grid-filename">{file.file_name}</span>
+                            {#if file.sharpness}
+                              <span class="grid-sharpness">⚡ {Math.round(file.sharpness)}</span>
+                            {/if}
                           </div>
                         </div>
                       {/each}
@@ -1570,6 +1647,11 @@
             <div class="exif-item">
               <span class="exif-label">ISO</span>
               <span class="exif-val">ISO {files[currentIndex]?.iso || 'N/A'}</span>
+            </div>
+            <div class="exif-divider"></div>
+            <div class="exif-item">
+              <span class="exif-label">SHARPNESS</span>
+              <span class="exif-val">{files[currentIndex]?.sharpness ? Math.round(files[currentIndex].sharpness) : 'N/A'}</span>
             </div>
             <div class="exif-divider"></div>
             <div class="exif-item">
@@ -2494,6 +2576,101 @@
     justify-content: center;
   }
 
+  .recent-folders-container {
+    margin-top: 24px;
+    text-align: left;
+    width: 100%;
+    border-top: 1px dashed hsl(var(--border-muted));
+    padding-top: 20px;
+  }
+
+  .recent-title {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: hsl(var(--text-muted));
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .recent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .recent-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid hsl(var(--border-muted));
+    background: hsl(var(--bg-input) / 0.3);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+    width: 100%;
+  }
+
+  .recent-item:hover {
+    background: hsl(var(--bg-input) / 0.8);
+    border-color: hsl(var(--accent-amber) / 0.4);
+  }
+
+  .recent-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+    flex: 1;
+    margin-right: 12px;
+  }
+
+  .recent-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: hsl(var(--text-primary));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .recent-path {
+    font-size: 10px;
+    color: hsl(var(--text-muted));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+  }
+
+  .recent-remove {
+    background: transparent;
+    border: none;
+    color: hsl(var(--text-muted));
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 20px;
+    width: 20px;
+    border-radius: 4px;
+    transition: all 0.12s ease;
+  }
+
+  .recent-remove:hover {
+    color: hsl(var(--text-primary));
+    background: rgba(255, 255, 255, 0.1);
+  }
+
   .welcome-container {
     max-width: 460px;
     width: 100%;
@@ -2899,6 +3076,7 @@
   .item-badge.keep { background: hsl(var(--accent-keep) / 0.2); color: hsl(var(--accent-keep)); }
   .item-badge.trash { background: hsl(var(--accent-trash) / 0.2); color: hsl(var(--accent-trash)); }
   .item-badge.star { background: hsl(var(--accent-star) / 0.2); color: hsl(var(--accent-star)); }
+  .item-badge.focus-best { background: hsl(var(--accent-amber) / 0.2); color: hsl(var(--accent-amber)); }
 
   /* Context Menu Styles */
   .custom-context-menu {
@@ -3078,7 +3256,10 @@
     border-top: 1px solid hsl(var(--border-muted));
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
+    gap: 6px;
+    box-sizing: border-box;
+    width: 100%;
   }
 
   .grid-filename {
@@ -3088,7 +3269,19 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    width: 100%;
-    text-align: center;
+    flex: 1;
+    text-align: left;
+  }
+
+  .grid-sharpness {
+    font-size: 10px;
+    font-weight: 600;
+    color: hsl(var(--accent-amber));
+    white-space: nowrap;
+  }
+
+  .grid-badge.focus-best {
+    background: hsl(var(--accent-amber));
+    color: #fff;
   }
 </style>
