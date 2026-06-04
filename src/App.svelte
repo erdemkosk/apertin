@@ -1319,45 +1319,7 @@
               </div>
             </div>
           {/if}
-          
-          <div class="shortcuts-legend">
-            <h3 class="legend-title">KEYBOARD SHORTCUTS</h3>
-            <div class="legend-grid">
-              <div class="legend-item">
-                <span class="legend-mode">TINDER MODE:</span>
-                <div>
-                  <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd> Keep
-                  <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd> Trash
-                </div>
-              </div>
-              <div class="legend-item">
-                <span class="legend-mode">BROWSE MODE:</span>
-                <div>
-                  <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd> Next
-                  <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd> Prev
-                </div>
-              </div>
-              <div class="legend-item">
-                <span class="legend-mode">GENERAL:</span>
-                <div>
-                  <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd> Star / Starred
-                  <kbd class="kbd-hint {activeKeys.ArrowDown ? 'active-press' : ''}">↓</kbd> Clear decision
-                </div>
-              </div>
-              <div class="legend-item">
-                <span class="legend-mode">FOCUS ZOOM:</span>
-                <div>
-                  <kbd class="kbd-hint {activeKeys.Space ? 'active-press' : ''}">Space</kbd> Sharpness Zoom / Pan (Drag)
-                </div>
-              </div>
-              <div class="legend-item">
-                <span class="legend-mode">COMPARE VIEW:</span>
-                <div>
-                  <kbd class="kbd-hint">Cmd</kbd> / <kbd class="kbd-hint">Ctrl</kbd> + Click sidebar
-                </div>
-              </div>
-            </div>
-          </div>
+
         </div>
 
       <!-- CULLING STATE -->
@@ -2787,35 +2749,6 @@
     cursor: not-allowed;
   }
 
-  .shortcuts-legend {
-    border-top: 1px solid hsl(var(--border-muted));
-    padding-top: 20px;
-    text-align: left;
-  }
-
-  .legend-title {
-    font-family: var(--font-display);
-    font-size: 10px;
-    font-weight: 700;
-    color: hsl(var(--text-muted));
-    letter-spacing: 0.1em;
-    margin-bottom: 12px;
-    text-align: center;
-  }
-
-  .legend-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px 20px;
-  }
-
-  .legend-item {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    color: hsl(var(--text-secondary));
-    font-size: 11px;
-  }
 
   .complete-container {
     max-width: 500px;
