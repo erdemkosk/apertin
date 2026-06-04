@@ -11,6 +11,8 @@
 [![Rust](https://img.shields.io/badge/Backend-Rust-CE412B?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Svelte](https://img.shields.io/badge/Frontend-Svelte-FF3E00?style=flat-square&logo=svelte)](https://svelte.dev/)
 [![macOS](https://img.shields.io/badge/macOS-Supported-000000?style=flat-square&logo=apple)](https://www.apple.com/macos/)
+[![Windows](https://img.shields.io/badge/Windows-Supported-0078D6?style=flat-square&logo=windows)](https://www.microsoft.com/windows/)
+[![Linux](https://img.shields.io/badge/Linux-Supported-FCC624?style=flat-square&logo=linux&logoColor=black)](https://www.kernel.org/)
 
 > Crafted with ❤️ by [Mustafa Erdem Köşk](https://github.com/mek)
 
@@ -38,6 +40,7 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 |---|---|
 | 🚀 **Zero-decode preview extraction** | Reads the embedded JPEG directly from RAW binary — no full decode needed |
 | 🔥 **Swipe Mode** | Keyboard-driven keep/trash workflow with animated card transitions |
+| ↩️ **Undo** | Instantly reverse the last keep/trash/star decision with `⌘Z` / `Ctrl+Z` or the dock button — works even from the summary screen |
 | 👁️ **Browse Mode** | Classic gallery browser with instant prev/next navigation |
 | 📂 **Grid Mode** | Full-screen interactive lazy-loaded thumbnail view of files with status badges |
 | 📊 **Split Compare View** | Compare up to 4 images side-by-side with synchronized zoom/pan |
@@ -110,6 +113,7 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | `→` | Keep image |
 | `←` | Trash image |
 | `↑` | Toggle star |
+| `⌘Z` / `Ctrl+Z` | Undo last decision |
 | `Space` | Toggle focus zoom (persists across images) |
 
 ### Browse Mode
@@ -118,6 +122,7 @@ The core engine is written in **Rust** and uses memory-mapped file I/O to extrac
 | `→` | Next image |
 | `←` | Previous image |
 | `↑` | Toggle star |
+| `⌘Z` / `Ctrl+Z` | Undo last decision |
 | `Space` | Toggle focus zoom |
 
 ### Grid Mode
@@ -272,6 +277,29 @@ Then double-click the app normally. macOS will not ask again.
 
 > **Tip:** If you haven't moved the app to `/Applications` yet, drag the `.app` from the mounted `.dmg` into Terminal instead of typing the path.
 
+### Windows — First Launch (SmartScreen)
+
+Because the installer is not yet signed with an EV certificate, Windows SmartScreen may show *"Windows protected your PC."*
+
+**One-time fix:** click **More info → Run anyway**. Right-clicking a RAW file → **Open with → Apertin** opens its folder ready to cull, and **Reveal in Explorer** highlights the file directly.
+
+### Linux — First Launch (AppImage)
+
+Make the AppImage executable, then run it:
+
+```bash
+chmod +x Apertin_*.AppImage
+./Apertin_*.AppImage
+```
+
+Or install the `.deb` on Debian/Ubuntu:
+
+```bash
+sudo dpkg -i apertin_*.deb
+```
+
+> On Linux, "Reveal in file manager" opens the containing folder (most desktops have no portable verb to pre-select a file).
+
 ---
 
 ### Clone & Run
@@ -348,10 +376,13 @@ Apertin's UI is built around a single principle: **the photo should fill your vi
 
 ## 🗺️ Roadmap
 
-- [ ] **Windows support** (HIDPI scaling + file association)
-- [ ] **Linux support** (GTK file dialog)  
+- [x] **Windows support** — `.msi` / `.exe` installers, Explorer "reveal & select", file associations
+- [x] **Linux support** — `.deb` / `.AppImage` builds, GTK file dialog
 - [x] **Collection view** — grid browse with zoom
+- [x] **Virtualized grid** — windowed rendering keeps 5000+ file folders smooth
+- [x] **Undo** — reverse the last keep/trash/star decision with `⌘Z` / `Ctrl+Z`
 - [ ] **Color label system** — reject / 1-star / 2-star / pick
+- [ ] **In-app auto-update** — one-click update via the Tauri updater
 - [x] **Smart grouping** — pHash + complete-linkage clustering for burst and similar-scene detection
 - [x] **XMP sidecar export** — write ratings back as metadata without moving files
 - [x] **Lightroom Classic integration** — open Selected_to_Edit directly in catalog

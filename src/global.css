@@ -602,6 +602,35 @@ button {
   gap: 6px;
 }
 
+/* Undo button living inside the keyboard dock */
+.dock-undo-btn {
+  background: hsl(var(--bg-input) / 0.4);
+  border: 1px solid hsl(var(--border-muted));
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+  font-family: inherit;
+}
+
+.dock-undo-btn:hover:not(:disabled) {
+  background: hsl(var(--accent-amber) / 0.18);
+  border-color: hsl(var(--accent-amber) / 0.5);
+}
+
+.dock-undo-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.dock-undo-btn::after {
+  content: "";
+  width: 1px;
+  height: 18px;
+  margin-left: 4px;
+  background: hsl(var(--border-muted));
+}
+
 .dock-key-label {
   font-size: 10px;
   font-weight: 600;

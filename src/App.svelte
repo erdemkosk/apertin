@@ -1,6 +1,16 @@
 <script>
   import { onMount } from 'svelte';
   import logo from './logo.png';
+  import {
+    TIME_GAPS,
+    THRESHOLDS,
+    groupColor,
+    groupByTime,
+    computeGroupSizes,
+    computeDisplayOrder,
+  } from './lib/grouping.js';
+  import { computeHistogram, generateSvgPath } from './lib/histogram.js';
+  import { fetchLatestRelease, isNewerVersion } from './lib/version.js';
   
   // Attempt to import tauri core invoke. Fallback if running in browser dev.
   let invoke;
@@ -34,19 +44,11 @@
     if (checkingUpdate) return;
     checkingUpdate = true;
     try {
-      const res = await fetch(
-        `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
-        { headers: { Accept: 'application/vnd.github+json' } }
-      );
-      if (!res.ok) throw new Error('network');
-      const data = await res.json();
-      // tag_name is like "v0.1.0-build.12" — extract semver prefix
-      const match = data.tag_name?.match(/^v?(\d+\.\d+\.\d+)/);
-      if (match) {
-        latestVersion = match[1];
-        updateReleaseUrl = data.html_url ?? '';
-        const current = appVersion.replace(/[^\d.]/g, '');
-        updateAvailable = latestVersion !== current && latestVersion > current;
+      const release = await fetchLatestRelease(GITHUB_REPO);
+      if (release) {
+        latestVersion = release.version;
+        updateReleaseUrl = release.url;
+        updateAvailable = isNewerVersion(release.version, appVersion);
       }
     } catch (_) {
       if (!silent) alert('Update check failed. Please check your internet connection.');
@@ -95,6 +97,95 @@
   let trashList = new Set();
   let starList = new Set();
 
+  // ── Undo history ──────────────────────────────────────────────────────────
+  // Each entry snapshots enough state to fully reverse one decision:
+  //   { filePath, fromIndex, fromState, prevKeep, prevTrash, prevStar }
+  // `fromState` lets us bounce back from the summary screen if the undone
+  // action was the one that ended the cull.
+  let undoStack = [];
+  const UNDO_LIMIT = 200;
+
+  function pushUndo(filePath) {
+    undoStack.push({
+      filePath,
+      fromIndex: currentIndex,
+      fromState: state,
+      prevKeep: keepList.has(filePath),
+      prevTrash: trashList.has(filePath),
+      prevStar: starList.has(filePath),
+    });
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    undoStack = undoStack; // trigger reactivity
+  }
+
+  function undo() {
+    if (animating || undoStack.length === 0) return;
+    const last = undoStack.pop();
+    undoStack = undoStack;
+
+    // Restore membership for the affected file
+    const apply = (set, wasIn) => {
+      if (wasIn) set.add(last.filePath);
+      else set.delete(last.filePath);
+    };
+    apply(keepList, last.prevKeep);
+    apply(trashList, last.prevTrash);
+    apply(starList, last.prevStar);
+    keepList = new Set(keepList);
+    trashList = new Set(trashList);
+    starList = new Set(starList);
+
+    // Return to the image (and culling screen) where the decision was made
+    if (last.fromState === 'summary' && state !== 'summary') {
+      cleanupSummaryPreviews();
+      state = 'culling';
+    }
+    currentIndex = Math.min(last.fromIndex, files.length - 1);
+    swipeState = '';
+    isZoomed = false;
+    panOffsets = {};
+    saveSession();
+  }
+
+  // ── Grid virtualization (windowing) ────────────────────────────────────────
+  // Only the rows currently in view (+ a small buffer) are mounted to the DOM,
+  // so a 5000-file folder renders ~40 cards instead of 5000.
+  const GRID_GAP = 16;          // must match .grid-window gap
+  const GRID_CARD_MIN_W = 160;  // must match minmax() min width
+  const GRID_CARD_H = 170;      // fixed card height for uniform rows
+  const GRID_PAD_X = 10;        // horizontal padding inside scroller
+  const GRID_PAD_TOP = 10;
+  const GRID_PAD_BOTTOM = 80;
+  const GRID_BUFFER_ROWS = 3;
+
+  let gridScrollTop = 0;
+  let gridViewportW = 0;
+  let gridViewportH = 0;
+
+  $: gridRowH = GRID_CARD_H + GRID_GAP;
+  $: gridCols = Math.max(
+    1,
+    Math.floor((gridViewportW - GRID_PAD_X * 2 + GRID_GAP) / (GRID_CARD_MIN_W + GRID_GAP))
+  );
+  $: gridTotalRows = Math.ceil(files.length / gridCols);
+  $: gridContentH = gridTotalRows * gridRowH + GRID_PAD_TOP + GRID_PAD_BOTTOM;
+  $: gridFirstRow = Math.max(0, Math.floor(gridScrollTop / gridRowH) - GRID_BUFFER_ROWS);
+  $: gridLastRow = Math.min(
+    Math.max(gridTotalRows - 1, 0),
+    Math.ceil((gridScrollTop + gridViewportH) / gridRowH) + GRID_BUFFER_ROWS
+  );
+  $: gridStart = gridFirstRow * gridCols;
+  $: gridEnd = Math.min(files.length, (gridLastRow + 1) * gridCols);
+  $: gridOffsetY = GRID_PAD_TOP + gridFirstRow * gridRowH;
+
+  function handleGridScroll(e) {
+    gridScrollTop = e.currentTarget.scrollTop;
+  }
+
+  // Grid scroller is remounted each time we leave grid mode; keep our tracked
+  // scroll offset in sync so the window starts at the top on re-entry.
+  $: if (mode !== 'grid') gridScrollTop = 0;
+
   // Loading States
   let loading = false;
   let loadingMessage = '';
@@ -131,89 +222,20 @@
   let groupUnlistener = null;
   // 'time' | 'visual'
   let groupMode = 'time';
-  // Time gap presets (seconds)
-  const TIME_GAPS = [{ label: '30s', value: 30 }, { label: '2 min', value: 120 }, { label: '5 min', value: 300 }];
-  let timeGap = 120;
-  // Visual similarity threshold presets (Hamming, 0-64)
-  // pHash thresholds — Hamming distance over 64 bits.
-  // pHash uses DCT low-frequencies → more stable than dHash; lower values work.
-  //   6 = burst / near-identical only
-  //  10 = same scene, varying exposure/framing   (recommended default)
-  //  15 = similar subject, different angle
-  const THRESHOLDS = [{ label: 'Burst', value: 6 }, { label: 'Normal', value: 10 }, { label: 'Loose', value: 15 }];
-  let visualThreshold = 10;
+  let timeGap = 120;          // default 2 min (see TIME_GAPS)
+  let visualThreshold = 10;   // default "Normal" (see THRESHOLDS)
 
-  $: groupSizes = (() => {
-    const s = {};
-    for (const gid of groupAssignments) {
-      if (gid != null) s[gid] = (s[gid] || 0) + 1;
-    }
-    return s;
-  })();
+  $: groupSizes = computeGroupSizes(groupAssignments);
 
   // Re-order indices so all members of a group are rendered consecutively,
   // anchored at the position of the earliest member in each group.
-  $: displayOrder = (() => {
-    const placed = new Set();
-    const order = [];
-    for (let i = 0; i < files.length; i++) {
-      if (placed.has(i)) continue;
-      const gid = groupAssignments[i] ?? null;
-      if (gid != null && (groupSizes[gid] ?? 1) > 1) {
-        // Insert all members of this group together
-        for (let j = i; j < files.length; j++) {
-          if (!placed.has(j) && groupAssignments[j] === gid) {
-            order.push(j);
-            placed.add(j);
-          }
-        }
-      } else {
-        order.push(i);
-        placed.add(i);
-      }
-    }
-    return order;
-  })();
-
-  const GROUP_COLORS = [
-    '#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444',
-    '#06b6d4','#f97316','#84cc16','#ec4899','#14b8a6',
-    '#6366f1','#a78bfa',
-  ];
-  function groupColor(gid) {
-    return gid == null ? 'transparent' : GROUP_COLORS[gid % GROUP_COLORS.length];
-  }
-
-  // Parse EXIF date "2026:06:02 12:30:15" → ms timestamp (or null)
-  function parseExifDate(str) {
-    if (!str) return null;
-    const iso = str.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
-    const t = Date.parse(iso);
-    return isNaN(t) ? null : t;
-  }
-
-  // Instant time-based grouping (pure JS, no Rust call)
-  function groupByTime(gapSec) {
-    const gapMs = gapSec * 1000;
-    const assignments = new Array(files.length).fill(null);
-    const indexed = files.map((f, i) => ({ i, t: parseExifDate(f.date_time) }))
-                         .filter(x => x.t != null)
-                         .sort((a, b) => a.t - b.t);
-
-    let gid = 0, lastT = null;
-    for (const { i, t } of indexed) {
-      if (lastT == null || t - lastT > gapMs) { gid++; }
-      assignments[i] = gid;
-      lastT = t;
-    }
-    return assignments;
-  }
+  $: displayOrder = computeDisplayOrder(files, groupAssignments, groupSizes);
 
   async function runGrouping() {
     if (files.length === 0 || groupAnalyzing) return;
 
     if (groupMode === 'time') {
-      groupAssignments = groupByTime(timeGap);
+      groupAssignments = groupByTime(files, timeGap);
       return;
     }
 
@@ -450,6 +472,7 @@
       keepList = new Set();
       trashList = new Set();
       starList = new Set();
+      undoStack = [];
 
       // Restore previous session for this folder if one exists
       if (invoke) {
@@ -480,7 +503,8 @@
     swipeState = 'keep';
     animating = true;
     const current = files[currentIndex];
-    
+    pushUndo(current.file_path);
+
     setTimeout(() => {
       keepList.add(current.file_path);
       trashList.delete(current.file_path);
@@ -500,6 +524,7 @@
     swipeState = 'trash';
     animating = true;
     const current = files[currentIndex];
+    pushUndo(current.file_path);
 
     setTimeout(() => {
       trashList.add(current.file_path);
@@ -517,6 +542,7 @@
 
   function toggleStar() {
     const current = files[currentIndex];
+    pushUndo(current.file_path);
     if (starList.has(current.file_path)) {
       starList.delete(current.file_path);
     } else {
@@ -672,66 +698,15 @@
     }
   }
 
-  // Histogram calculation functions
-  function updateHistogram(imgUrl) {
-    if (!imgUrl) return;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      // Analyze a downscaled 128x128 image for fast performance
-      canvas.width = 128;
-      canvas.height = 128;
-      ctx.drawImage(img, 0, 0, 128, 128);
-
-      const imgData = ctx.getImageData(0, 0, 128, 128);
-      const data = imgData.data;
-
-      const l = new Uint32Array(256);
-      const r = new Uint32Array(256);
-      const g = new Uint32Array(256);
-      const b = new Uint32Array(256);
-
-      for (let i = 0; i < data.length; i += 4) {
-        const rv = data[i];
-        const gv = data[i + 1];
-        const bv = data[i + 2];
-        const lv = Math.round(0.299 * rv + 0.587 * gv + 0.114 * bv);
-
-        r[rv]++;
-        g[gv]++;
-        b[bv]++;
-        l[lv]++;
-      }
-
-      let max = 0;
-      for (let i = 0; i < 256; i++) {
-        if (r[i] > max) max = r[i];
-        if (g[i] > max) max = g[i];
-        if (b[i] > max) max = b[i];
-        if (l[i] > max) max = l[i];
-      }
-
-      rData = r;
-      gData = g;
-      bData = b;
-      lumaData = l;
-      histogramMaxVal = max;
-    };
-    img.src = imgUrl;
-  }
-
-  function generateSvgPath(data, max) {
-    if (max === 0) return "M 0 80";
-    let path = "M 0 80";
-    for (let i = 0; i < 256; i++) {
-      const x = (i / 255) * 200; // Map 256 values to width 200
-      const y = 80 - (data[i] / max) * 75; // Map to height 80, leaving padding
-      path += ` L ${x} ${y}`;
-    }
-    path += " L 200 80 Z";
-    return path;
+  // Recompute the EXIF-panel histogram whenever the active preview changes.
+  async function updateHistogram(imgUrl) {
+    const result = await computeHistogram(imgUrl);
+    if (!result) return;
+    rData = result.r;
+    gData = result.g;
+    bData = result.b;
+    lumaData = result.l;
+    histogramMaxVal = result.max;
   }
 
   // Reactive paths for the Histogram
@@ -761,6 +736,15 @@
     if (keyName in activeKeys) {
       activeKeys[keyName] = true;
       activeKeys = { ...activeKeys };
+    }
+
+    // Undo (Cmd+Z / Ctrl+Z) — works during culling and from the summary screen
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+      if (state === 'culling' || state === 'summary') {
+        e.preventDefault();
+        undo();
+      }
+      return;
     }
 
     if (state !== 'culling') return;
@@ -930,6 +914,7 @@
     keepList = new Set();
     trashList = new Set();
     starList = new Set();
+    undoStack = [];
     groupAssignments = [];
     groupAnalyzing = false;
     groupProgress = { processed: 0, total: 0 };
@@ -1207,7 +1192,15 @@
             Ultra-fast, zero-cloud RAW image culler. Mapped and compiled on your local machine to triage thousands of photos in seconds.
           </p>
           <p class="welcome-byline">Crafted with ❤️ by Mustafa Erdem Köşk</p>
-          
+
+          {#if updateAvailable}
+            <button class="welcome-update-banner" on:click={() => openUrl(updateReleaseUrl)}>
+              <span class="welcome-update-dot">●</span>
+              <span>New version <strong>v{latestVersion}</strong> available</span>
+              <span class="welcome-update-cta">Download →</span>
+            </button>
+          {/if}
+
           <!-- Drag and drop zone with clickable browse trigger -->
           <div 
             class="drag-zone {dragActive ? 'drag-active' : ''}"
@@ -1364,32 +1357,45 @@
                   </div>
                 </div>
               {:else}
-                <div class="grid-layout">
-                  {#each files as file, idx}
-                    <div 
-                      class="grid-card glass-panel {currentIndex === idx ? 'active' : ''}" 
-                      on:click={() => jumpToImage(idx)} 
-                      on:dblclick={() => { jumpToImage(idx); mode = 'gallery'; }}
+                <div
+                  class="grid-layout grid-scroll"
+                  on:scroll={handleGridScroll}
+                  bind:clientWidth={gridViewportW}
+                  bind:clientHeight={gridViewportH}
+                >
+                  <div class="grid-sizer" style="height: {gridContentH}px;">
+                    <div
+                      class="grid-window"
+                      style="transform: translateY({gridOffsetY}px); grid-template-columns: repeat({gridCols}, minmax(0, 1fr)); grid-auto-rows: {GRID_CARD_H}px;"
                     >
-                      <div class="grid-thumb-container">
-                        <img src={fetchPreviewUrl(idx)} alt={file.file_name} class="grid-thumb" loading="lazy" />
-                        <div class="grid-card-badges">
-                          {#if keepList.has(file.file_path)}
-                            <span class="grid-badge keep">✓</span>
-                          {/if}
-                          {#if trashList.has(file.file_path)}
-                            <span class="grid-badge trash">✗</span>
-                          {/if}
-                          {#if starList.has(file.file_path)}
-                            <span class="grid-badge star">★</span>
-                          {/if}
+                      {#each files.slice(gridStart, gridEnd) as file, i (file.file_path)}
+                        {@const idx = gridStart + i}
+                        <div 
+                          class="grid-card glass-panel {currentIndex === idx ? 'active' : ''}" 
+                          on:click={() => jumpToImage(idx)} 
+                          on:dblclick={() => { jumpToImage(idx); mode = 'gallery'; }}
+                        >
+                          <div class="grid-thumb-container">
+                            <img src={fetchPreviewUrl(idx)} alt={file.file_name} class="grid-thumb" loading="lazy" />
+                            <div class="grid-card-badges">
+                              {#if keepList.has(file.file_path)}
+                                <span class="grid-badge keep">✓</span>
+                              {/if}
+                              {#if trashList.has(file.file_path)}
+                                <span class="grid-badge trash">✗</span>
+                              {/if}
+                              {#if starList.has(file.file_path)}
+                                <span class="grid-badge star">★</span>
+                              {/if}
+                            </div>
+                          </div>
+                          <div class="grid-card-info">
+                            <span class="grid-filename">{file.file_name}</span>
+                          </div>
                         </div>
-                      </div>
-                      <div class="grid-card-info">
-                        <span class="grid-filename">{file.file_name}</span>
-                      </div>
+                      {/each}
                     </div>
-                  {/each}
+                  </div>
                 </div>
               {/if}
             {:else}
@@ -1455,6 +1461,15 @@
 
               <!-- Floating mechanical keyboard visualizer dock -->
               <div class="keyboard-helper-dock glass-panel">
+                <button
+                  class="dock-key-item dock-undo-btn"
+                  on:click={undo}
+                  disabled={undoStack.length === 0 || animating}
+                  title="Undo last decision (⌘Z)"
+                >
+                  <kbd class="kbd-hint">⌘Z</kbd>
+                  <span class="dock-key-label">Undo{undoStack.length ? ` (${undoStack.length})` : ''}</span>
+                </button>
                 <div class="dock-key-item">
                   <kbd class="kbd-hint {activeKeys.ArrowLeft ? 'active-press trash-press' : ''}">←</kbd>
                   <span class="dock-key-label">{mode === 'swipe' ? 'Trash' : 'Prev'}</span>
@@ -2513,6 +2528,43 @@
     line-height: 1.55;
   }
 
+  .welcome-update-banner {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding: 9px 16px;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--accent-amber) / 0.45);
+    background: hsl(var(--accent-amber) / 0.12);
+    color: hsl(var(--text-primary));
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+  }
+
+  .welcome-update-banner:hover {
+    background: hsl(var(--accent-amber) / 0.2);
+    border-color: hsl(var(--accent-amber) / 0.7);
+    transform: translateY(-1px);
+  }
+
+  .welcome-update-dot {
+    color: hsl(var(--accent-amber));
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .welcome-update-cta {
+    color: hsl(var(--accent-amber));
+    font-weight: 700;
+  }
+
   .input-group {
     display: flex;
     gap: 12px;
@@ -2867,13 +2919,27 @@
     height: 100%;
     min-height: 0;
     min-width: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    grid-auto-rows: min-content;
-    gap: 16px;
     overflow-y: auto;
-    padding: 10px 10px 80px 10px;
     box-sizing: border-box;
+  }
+
+  /* Virtualized grid: sizer reserves full scroll height, window holds the
+     small slice of cards currently visible, offset via translateY. */
+  .grid-sizer {
+    position: relative;
+    width: 100%;
+  }
+
+  .grid-window {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: grid;
+    gap: 16px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    will-change: transform;
   }
 
   .grid-card {

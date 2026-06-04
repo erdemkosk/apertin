@@ -425,13 +425,19 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
+        // explorer expects the path in the SAME argument as /select, separated
+        // by a comma and WITHOUT extra quotes. Normalise to backslashes so the
+        // file gets highlighted instead of just opening the drive root.
+        let win_path = path.replace('/', "\\");
         std::process::Command::new("explorer")
-            .arg(format!("/select,\"{}\"", path))
+            .arg(format!("/select,{}", win_path))
             .spawn()
             .map_err(|e| format!("Failed to reveal in Explorer: {}", e))?;
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
+        // Best-effort on Linux: most file managers don't have a portable
+        // "reveal & select" verb, so open the containing folder.
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new("."));
         open::that(parent).map_err(|e| format!("Failed to open parent: {}", e))?;
     }
@@ -439,12 +445,21 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
 }
 
 fn main() {
-    // Capture CLI argument: first arg that is an existing directory
+    // Capture CLI argument from "Open With" / drag-onto-icon launches.
+    // Accept either a directory (open it directly) or a single image file
+    // (open its containing folder) so the association works on every OS.
     let initial_path: Option<String> = std::env::args()
         .skip(1)
-        .find(|arg| {
-            if arg.starts_with('-') { return false; }
-            Path::new(arg).is_dir()
+        .filter(|arg| !arg.starts_with('-'))
+        .find_map(|arg| {
+            let p = Path::new(&arg);
+            if p.is_dir() {
+                Some(arg)
+            } else if p.is_file() {
+                p.parent().map(|parent| parent.to_string_lossy().into_owned())
+            } else {
+                None
+            }
         });
 
     tauri::Builder::default()
