@@ -622,14 +622,14 @@ pub fn scan_for_largest_jpeg(data: &[u8]) -> Option<(u32, u32)> {
     let mut best_len = 0;
 
     let mut i = 0;
-    // Previews are always in the header/prefix, so scanning up to 15MB is extremely safe and fast
-    let scan_limit = std::cmp::min(data.len() - 4, 15 * 1024 * 1024);
+    // Scan the entire file in case the preview starts later or the file is large
+    let scan_limit = data.len() - 4;
 
     while i < scan_limit {
         if data[i] == 0xFF && data[i + 1] == 0xD8 && data[i + 2] == 0xFF {
             let start_offset = i;
             let mut search_idx = start_offset + 2;
-            let search_limit = std::cmp::min(data.len(), start_offset + 10 * 1024 * 1024); // max 10MB preview
+            let search_limit = std::cmp::min(data.len(), start_offset + 30 * 1024 * 1024); // max 30MB preview
 
             while search_idx + 1 < search_limit {
                 if data[search_idx] == 0xFF && data[search_idx + 1] == 0xD9 {

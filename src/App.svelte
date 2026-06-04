@@ -110,6 +110,19 @@
   let gData = new Uint32Array(256);
   let bData = new Uint32Array(256);
   let histogramMaxVal = 0;
+
+  // Histogram Active Channels
+  let activeChannels = {
+    R: true,
+    G: true,
+    B: true,
+    Luma: true
+  };
+
+  function toggleChannel(chan) {
+    activeChannels[chan] = !activeChannels[chan];
+    activeChannels = { ...activeChannels };
+  }
   
   // Selection Lists
   let keepList = new Set();
@@ -355,15 +368,97 @@
   let nextPreviewUrl = '';
 
   // Reactive preview preloading
-  let loadingPreviewsForIndex = -1;
-  $: if (files.length > 0 && currentIndex < files.length && currentIndex !== loadingPreviewsForIndex) {
-    loadingPreviewsForIndex = currentIndex;
-    preloadPreviews(currentIndex);
+  $: if (files.length > 0 && currentIndex < files.length) {
+    currentPreviewUrl = fetchPreviewUrl(currentIndex);
+    nextPreviewUrl = (currentIndex + 1 < files.length) ? fetchPreviewUrl(currentIndex + 1) : '';
+  }
+
+  // Reactively track previewLoading state
+  $: {
+    const curFile = files[currentIndex];
+    if (curFile) {
+      if (!curFile.metadata_loaded || curFile.metadata_loaded === 'loading') {
+        previewLoading = true;
+      } else {
+        previewLoading = false;
+      }
+    } else {
+      previewLoading = false;
+    }
   }
 
   // Clean up main preview URL
   function cleanupPreviewUrl() {
     currentPreviewUrl = '';
+  }
+
+  // Lazy Metadata Loading
+  async function loadMetadataForFile(index) {
+    if (index < 0 || index >= files.length) return;
+    const file = files[index];
+    if (file.metadata_loaded) return;
+
+    // Lock loading state immediately
+    file.metadata_loaded = 'loading';
+
+    try {
+      if (invoke) {
+        const meta = await invoke('get_file_metadata', { filePath: file.file_path });
+        files[index] = { ...file, ...meta, metadata_loaded: true };
+      } else {
+        // Mock loading delay for browser development
+        await new Promise(r => setTimeout(r, 400));
+        files[index] = { ...file, preview_offset: 0, preview_length: 1024 * 1024, metadata_loaded: true };
+      }
+      files = files; // trigger Svelte reactivity
+    } catch (e) {
+      console.error("Failed to load metadata for", file.file_path, e);
+      file.metadata_loaded = 'failed';
+      files = files; // trigger Svelte reactivity
+    }
+  }
+
+  // Background Preloading logic
+  let preloadActive = false;
+
+  async function startBackgroundPreload() {
+    if (preloadActive || files.length === 0) return;
+    preloadActive = true;
+
+    while (preloadActive) {
+      let targetIndex = -1;
+      let minDistance = Infinity;
+
+      for (let i = 0; i < files.length; i++) {
+        if (!files[i].metadata_loaded) {
+          const dist = Math.abs(i - currentIndex);
+          if (dist < minDistance) {
+            minDistance = dist;
+            targetIndex = i;
+          }
+        }
+      }
+
+      if (targetIndex === -1) {
+        break;
+      }
+
+      try {
+        await loadMetadataForFile(targetIndex);
+      } catch (e) {
+        console.error("Preload error at index", targetIndex, e);
+      }
+
+      // 50ms throttle delay between background preloads to keep interface responsive
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    preloadActive = false;
+  }
+
+  // Reactive trigger when entering culling state or files populate
+  $: if (state === 'culling' && files.length > 0) {
+    startBackgroundPreload();
   }
 
   function cleanupNextPreviewUrl() {
@@ -374,26 +469,23 @@
   function fetchPreviewUrl(index) {
     if (index < 0 || index >= files.length) return '';
     const file = files[index];
-    if (invoke) {
-      const encodedPath = encodeURIComponent(file.file_path);
-      return `apertin-preview://localhost?path=${encodedPath}&offset=${file.preview_offset}&length=${file.preview_length}`;
-    } else {
+
+    if (!invoke) {
       // Mock preview for browser development
       return 'https://picsum.photos/1600/1000?random=' + index;
     }
-  }
 
-  // Set current and next preview synchronously
-  function preloadPreviews(index) {
-    previewLoading = false; // Synchronous custom protocol loading, no JS loader needed
-    currentPreviewUrl = fetchPreviewUrl(index);
-
-    // Preload next preview in background
-    if (index + 1 < files.length) {
-      nextPreviewUrl = fetchPreviewUrl(index + 1);
-    } else {
-      nextPreviewUrl = '';
+    if (!file.metadata_loaded) {
+      loadMetadataForFile(index);
+      return '';
     }
+
+    if (file.metadata_loaded === 'loading' || file.metadata_loaded === 'failed') {
+      return '';
+    }
+
+    const encodedPath = encodeURIComponent(file.file_path);
+    return `apertin-preview://localhost?path=${encodedPath}&offset=${file.preview_offset}&length=${file.preview_length}`;
   }
 
   let dragActive = false;
@@ -720,6 +812,51 @@
     contextMenuVisible = false;
   }
 
+  // Draggable Keyboard Helper Dock States
+  let dockX = null;
+  let dockY = null;
+  let isDraggingDock = false;
+  let dragDockStartX = 0;
+  let dragDockStartY = 0;
+  let dragDockStartOffsetLeft = 0;
+  let dragDockStartOffsetTop = 0;
+
+  function startDragDock(e) {
+    const dockEl = document.querySelector('.keyboard-helper-dock');
+    if (!dockEl) return;
+    const rect = dockEl.getBoundingClientRect();
+    const parentEl = dockEl.offsetParent;
+    const parentRect = parentEl ? parentEl.getBoundingClientRect() : { left: 0, top: 0 };
+    
+    dockX = rect.left - parentRect.left;
+    dockY = rect.top - parentRect.top;
+    
+    isDraggingDock = true;
+    dragDockStartX = e.clientX;
+    dragDockStartY = e.clientY;
+    dragDockStartOffsetLeft = dockX;
+    dragDockStartOffsetTop = dockY;
+    
+    window.addEventListener('mousemove', handleDragDockMove);
+    window.addEventListener('mouseup', handleDragDockEnd);
+    e.preventDefault();
+  }
+
+  function handleDragDockMove(e) {
+    if (!isDraggingDock) return;
+    const dx = e.clientX - dragDockStartX;
+    const dy = e.clientY - dragDockStartY;
+    dockX = dragDockStartOffsetLeft + dx;
+    dockY = dragDockStartOffsetTop + dy;
+  }
+
+  // Clean up global drag listeners on mouse up
+  function handleDragDockEnd() {
+    isDraggingDock = false;
+    window.removeEventListener('mousemove', handleDragDockMove);
+    window.removeEventListener('mouseup', handleDragDockEnd);
+  }
+
   async function openInLightroom(filePath) {
     hideContextMenu();
     if (invoke) {
@@ -976,6 +1113,28 @@
     state = 'welcome';
   }
 
+  // Close Folder (Go back to Welcome screen, saving current session first)
+  async function closeFolder() {
+    preloadActive = false;
+    await saveSession();
+
+    cleanupPreviewUrl();
+    cleanupNextPreviewUrl();
+    cleanupSummaryPreviews();
+    files = [];
+    currentIndex = 0;
+    dirPath = '';
+    keepList = new Set();
+    trashList = new Set();
+    starList = new Set();
+    undoStack = [];
+    groupAssignments = [];
+    groupAnalyzing = false;
+    groupProgress = { processed: 0, total: 0 };
+    if (groupUnlistener) { groupUnlistener(); groupUnlistener = null; }
+    state = 'welcome';
+  }
+
   onMount(async () => {
     // Ensure window has keyboard focus for Tauri
     window.focus();
@@ -1195,6 +1354,11 @@
         <div class="top-title">Welcome to Apertin</div>
       {:else if state === 'culling'}
         <div class="top-title breadcrumb">
+          <button class="top-back-btn" on:click={closeFolder} title="Back to Welcome (Saves Session)">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="back-icon">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+          </button>
           <span class="folder-path">{dirPath}</span>
           <span class="chevron">/</span>
           <span class="active-file">{files[currentIndex]?.file_name || ''}</span>
@@ -1206,26 +1370,40 @@
             class="mode-btn {mode === 'gallery' ? 'active' : ''}" 
             on:click={() => mode = 'gallery'}
           >
-            👁️ Browse Mode
+            <svg class="mode-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Browse Mode
           </button>
           <button 
             class="mode-btn {mode === 'swipe' ? 'active' : ''}" 
             on:click={() => mode = 'swipe'}
           >
-            🔥 Swipe Mode
+            <svg class="mode-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" />
+            </svg>
+            Swipe Mode
           </button>
           <button 
             class="mode-btn {mode === 'grid' ? 'active' : ''}" 
             on:click={() => mode = 'grid'}
           >
-            📂 Grid Mode
+            <svg class="mode-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+            Grid Mode
           </button>
           {#if compareIndices.length > 1}
             <button 
               class="mode-btn {mode === 'compare' ? 'active' : ''}" 
               on:click={() => mode = 'compare'}
             >
-              📊 Compare ({compareIndices.length})
+              <svg class="mode-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6H3a1 1 0 00-1 1v10a1 1 0 001 1h9m0-12v12m0-12h9a1 1 0 011 1v10a1 1 0 01-1 1h-9" />
+              </svg>
+              Compare ({compareIndices.length})
             </button>
           {/if}
           <div class="vertical-divider"></div>
@@ -1233,7 +1411,10 @@
         </div>
       {:else if state === 'summary'}
         <div class="top-title">Culling Decisions Summary</div>
-        <button class="new-session-btn" on:click={() => state = 'culling'}>Back to Grid</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="new-session-btn" on:click={closeFolder}>← Change Folder</button>
+          <button class="new-session-btn" on:click={() => state = 'culling'}>Back to Grid</button>
+        </div>
       {:else if state === 'complete'}
         <div class="top-title">Summary Action Completed</div>
       {/if}
@@ -1307,8 +1488,11 @@
                 {#each recentFolders as path}
                   {@const folderName = path.split('/').pop() || path.split('\\').pop() || path}
                   <button class="recent-item glass-panel" on:click={() => openRecentFolder(path)}>
+                    <svg class="recent-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
                     <div class="recent-info">
-                      <span class="recent-name">📁 {folderName}</span>
+                      <span class="recent-name">{folderName}</span>
                       <span class="recent-path" title={path}>{path}</span>
                     </div>
                     <button class="recent-remove" on:click={(e) => removeRecentFolder(path, e)} title="Remove from list">
@@ -1507,7 +1691,17 @@
               {/if}
 
               <!-- Floating mechanical keyboard visualizer dock -->
-              <div class="keyboard-helper-dock glass-panel">
+              <div 
+                class="keyboard-helper-dock glass-panel"
+                style="{dockX !== null ? 'left: ' + dockX + 'px; top: ' + dockY + 'px; bottom: auto; transform: none;' : ''}"
+              >
+                <div class="dock-drag-handle" on:mousedown={startDragDock} title="Drag to reposition panel">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="drag-handle-svg">
+                    <circle cx="9" cy="5" r="1.5" /><circle cx="15" cy="5" r="1.5" />
+                    <circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" />
+                    <circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="19" r="1.5" />
+                  </svg>
+                </div>
                 <button
                   class="dock-key-item dock-undo-btn"
                   on:click={undo}
@@ -1549,17 +1743,52 @@
 
           <!-- Bottom EXIF Metadata readouts -->
           <footer class="exif-panel glass-panel">
-            <div class="histogram-container">
-              <svg viewBox="0 0 200 80" class="histogram-svg">
-                <line x1="50" y1="0" x2="50" y2="80" stroke="rgba(255,255,255,0.05)" />
-                <line x1="100" y1="0" x2="100" y2="80" stroke="rgba(255,255,255,0.05)" />
-                <line x1="150" y1="0" x2="150" y2="80" stroke="rgba(255,255,255,0.05)" />
-                
-                <path d={rPath} fill="rgba(239, 68, 68, 0.12)" stroke="rgb(239, 68, 68)" stroke-width="1" />
-                <path d={gPath} fill="rgba(16, 185, 129, 0.12)" stroke="rgb(16, 185, 129)" stroke-width="1" />
-                <path d={bPath} fill="rgba(59, 130, 246, 0.12)" stroke="rgb(59, 130, 246)" stroke-width="1" />
-                <path d={lumaPath} fill="rgba(255, 255, 255, 0.08)" stroke="rgb(255, 255, 255)" stroke-width="1.5" />
-              </svg>
+            <div class="histogram-wrapper">
+              <div class="histogram-container">
+                <svg viewBox="0 0 200 80" class="histogram-svg">
+                  <defs>
+                    <linearGradient id="rGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="rgb(239, 68, 68)" stop-opacity="0.35" />
+                      <stop offset="100%" stop-color="rgb(239, 68, 68)" stop-opacity="0.0" />
+                    </linearGradient>
+                    <linearGradient id="gGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="rgb(16, 185, 129)" stop-opacity="0.35" />
+                      <stop offset="100%" stop-color="rgb(16, 185, 129)" stop-opacity="0.0" />
+                    </linearGradient>
+                    <linearGradient id="bGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="rgb(59, 130, 246)" stop-opacity="0.35" />
+                      <stop offset="100%" stop-color="rgb(59, 130, 246)" stop-opacity="0.0" />
+                    </linearGradient>
+                    <linearGradient id="lumaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="rgb(255, 255, 255)" stop-opacity="0.18" />
+                      <stop offset="100%" stop-color="rgb(255, 255, 255)" stop-opacity="0.0" />
+                    </linearGradient>
+                  </defs>
+
+                  <line x1="50" y1="0" x2="50" y2="80" stroke="rgba(255,255,255,0.05)" />
+                  <line x1="100" y1="0" x2="100" y2="80" stroke="rgba(255,255,255,0.05)" />
+                  <line x1="150" y1="0" x2="150" y2="80" stroke="rgba(255,255,255,0.05)" />
+                  
+                  {#if activeChannels.R}
+                    <path d={rPath} fill="url(#rGrad)" stroke="rgb(239, 68, 68)" stroke-width="1" />
+                  {/if}
+                  {#if activeChannels.G}
+                    <path d={gPath} fill="url(#gGrad)" stroke="rgb(16, 185, 129)" stroke-width="1" />
+                  {/if}
+                  {#if activeChannels.B}
+                    <path d={bPath} fill="url(#bGrad)" stroke="rgb(59, 130, 246)" stroke-width="1" />
+                  {/if}
+                  {#if activeChannels.Luma}
+                    <path d={lumaPath} fill="url(#lumaGrad)" stroke="rgb(255, 255, 255)" stroke-width="1.5" />
+                  {/if}
+                </svg>
+              </div>
+              <div class="histogram-toggles">
+                <button class="histo-chip r {activeChannels.R ? 'active' : ''}" on:click={() => toggleChannel('R')}>R</button>
+                <button class="histo-chip g {activeChannels.G ? 'active' : ''}" on:click={() => toggleChannel('G')}>G</button>
+                <button class="histo-chip b {activeChannels.B ? 'active' : ''}" on:click={() => toggleChannel('B')}>B</button>
+                <button class="histo-chip l {activeChannels.Luma ? 'active' : ''}" on:click={() => toggleChannel('Luma')}>L</button>
+              </div>
             </div>
             <div class="exif-divider"></div>
             <div class="exif-item">
@@ -1792,6 +2021,9 @@
   }
 
   .mode-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: transparent;
     border: 1px solid hsl(var(--border-muted));
     color: hsl(var(--text-secondary));
@@ -1800,6 +2032,7 @@
     font-size: 12px;
     font-weight: 600;
     transition: all 0.15s ease;
+    cursor: pointer;
   }
 
   .mode-btn:hover {
@@ -1811,6 +2044,13 @@
     background: hsl(var(--accent-amber) / 0.15);
     color: hsl(var(--accent-amber));
     border-color: hsl(var(--accent-amber) / 0.5);
+  }
+
+  .mode-icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2;
+    flex-shrink: 0;
   }
 
   .vertical-divider {
@@ -2025,6 +2265,34 @@
     font-weight: 500;
     color: hsl(var(--text-muted));
     margin-left: 6px;
+  }
+
+  .top-back-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid hsl(var(--border-muted));
+    color: hsl(var(--text-secondary));
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-right: 8px;
+    transition: all 0.15s ease;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .top-back-btn:hover {
+    background: hsl(var(--bg-input));
+    color: hsl(var(--text-primary));
+    border-color: hsl(var(--accent-amber) / 0.5);
+  }
+
+  .back-icon {
+    width: 14px;
+    height: 14px;
   }
 
   /* Keyboard shortcut legends */
@@ -2551,6 +2819,15 @@
   .recent-item:hover {
     background: hsl(var(--bg-input) / 0.8);
     border-color: hsl(var(--accent-amber) / 0.4);
+    box-shadow: 0 4px 12px hsl(var(--accent-amber-glow) / 0.05);
+  }
+
+  .recent-icon {
+    width: 16px;
+    height: 16px;
+    color: hsl(var(--accent-amber));
+    margin-right: 10px;
+    flex-shrink: 0;
   }
 
   .recent-info {
@@ -3036,6 +3313,57 @@
     width: 100%;
     height: 100%;
     display: block;
+  }
+
+  .histogram-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .histogram-toggles {
+    display: flex;
+    gap: 4px;
+  }
+
+  .histo-chip {
+    font-size: 8px;
+    font-weight: 750;
+    padding: 1px 4px;
+    border-radius: 3px;
+    border: 1px solid hsl(var(--border-muted));
+    color: hsl(var(--text-muted));
+    cursor: pointer;
+    transition: all 0.12s ease;
+    background: transparent;
+    line-height: 1;
+  }
+
+  .histo-chip.r.active {
+    color: rgb(239, 68, 68);
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+  }
+  .histo-chip.g.active {
+    color: rgb(16, 185, 129);
+    border-color: rgba(16, 185, 129, 0.4);
+    background: rgba(16, 185, 129, 0.08);
+  }
+  .histo-chip.b.active {
+    color: rgb(59, 130, 246);
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(59, 130, 246, 0.08);
+  }
+  .histo-chip.l.active {
+    color: rgb(255, 255, 255);
+    border-color: rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .histo-chip:hover {
+    color: hsl(var(--text-primary));
+    border-color: hsl(var(--border-muted) / 0.8);
   }
 
   /* Grid View Styles */

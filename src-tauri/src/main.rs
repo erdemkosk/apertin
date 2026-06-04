@@ -227,12 +227,24 @@ fn scan_directory(dir_path: String) -> Result<Vec<RawMetadata>, String> {
         }
     }
 
+    // Return placeholders with file path and file name instantly
     let results: Vec<RawMetadata> = file_paths
-        .par_iter()
-        .filter_map(|path_str| parser::parse_raw_file(path_str).ok())
+        .into_iter()
+        .map(|fp| {
+            let file_name = Path::new(&fp)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            RawMetadata::new(fp, file_name)
+        })
         .collect();
 
     Ok(results)
+}
+
+#[tauri::command]
+fn get_file_metadata(file_path: String) -> Result<RawMetadata, String> {
+    parser::parse_raw_file(&file_path)
 }
 
 // ── Preview fetch ──────────────────────────────────────────────────────────
@@ -523,6 +535,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_directory,
+            get_file_metadata,
             get_raw_preview,
             execute_culling_actions,
             select_folder,

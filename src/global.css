@@ -587,13 +587,39 @@ button {
   padding: 8px 16px;
   border-radius: 10px;
   position: absolute;
-  bottom: 104px;
+  bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 60;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
   background: hsl(var(--bg-card) / 0.7);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dock-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  padding: 4px;
+  margin-right: -4px;
+  color: hsl(var(--text-secondary) / 0.6);
+  transition: color 0.15s ease;
+  user-select: none;
+}
+
+.dock-drag-handle:hover {
+  color: hsl(var(--text-secondary));
+}
+
+.dock-drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle-svg {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
 }
 
 .dock-key-item {
