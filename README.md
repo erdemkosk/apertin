@@ -6,7 +6,7 @@
 
 **Ultra-fast, zero-cloud RAW image culler for photographers who shoot thousands.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-orange.svg?style=flat-square)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-red.svg?style=flat-square)](LICENSE)
 [![Built with Tauri](https://img.shields.io/badge/Built%20with-Tauri%202-24C8DB?style=flat-square&logo=tauri)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Backend-Rust-CE412B?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Svelte](https://img.shields.io/badge/Frontend-Svelte-FF3E00?style=flat-square&logo=svelte)](https://svelte.dev/)
@@ -408,7 +408,7 @@ cd src-tauri && cargo check
 
 ## 📄 License
 
-MIT © Mustafa Erdem Köşk
+PolyForm Noncommercial 1.0.0 © Mustafa Erdem Köşk
 
 ---
 
