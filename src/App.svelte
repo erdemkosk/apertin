@@ -206,6 +206,7 @@
     ArrowRight: false,
     ArrowLeft: false,
     ArrowUp: false,
+    ArrowDown: false,
     Space: false
   };
 
@@ -558,6 +559,33 @@
     }, 350);
   }
 
+  // Clear the current image's decision entirely (keep + trash + star).
+  // Works on photos marked in a previous session too — undo only covers
+  // decisions made this session, so this is the reliable "reset" action.
+  function clearDecision() {
+    if (animating) return;
+    const current = files[currentIndex];
+    if (!current) return;
+    const path = current.file_path;
+    if (!keepList.has(path) && !trashList.has(path) && !starList.has(path)) return;
+
+    pushUndo(path);
+    keepList.delete(path);
+    trashList.delete(path);
+    starList.delete(path);
+    keepList = new Set(keepList);
+    trashList = new Set(trashList);
+    starList = new Set(starList);
+    swipeState = '';
+    saveSession();
+  }
+
+  // Whether the active image currently carries any decision (enables Clear)
+  $: _curPath = files[currentIndex]?.file_path;
+  $: currentHasDecision =
+    _curPath != null &&
+    (keepList.has(_curPath) || trashList.has(_curPath) || starList.has(_curPath));
+
   // Navigation helpers
   function nextImage() {
     if (currentIndex < files.length - 1) {
@@ -752,6 +780,12 @@
     // Prevent default scrolling keys
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', ' '].includes(e.key)) {
       e.preventDefault();
+    }
+
+    // Down clears the current image's decision in any mode (keep/trash/star)
+    if (e.key === 'ArrowDown') {
+      clearDecision();
+      return;
     }
 
     if (mode === 'swipe') {
@@ -1257,6 +1291,7 @@
                 <span class="legend-mode">GENERAL:</span>
                 <div>
                   <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd> Star / Starred
+                  <kbd class="kbd-hint {activeKeys.ArrowDown ? 'active-press' : ''}">↓</kbd> Clear decision
                 </div>
               </div>
               <div class="legend-item">
@@ -1478,6 +1513,15 @@
                   <kbd class="kbd-hint {activeKeys.ArrowUp ? 'active-press star-press' : ''}">↑</kbd>
                   <span class="dock-key-label">Star</span>
                 </div>
+                <button
+                  class="dock-key-item dock-undo-btn"
+                  on:click={clearDecision}
+                  disabled={!currentHasDecision || animating}
+                  title="Clear this photo's keep/trash/star (↓)"
+                >
+                  <kbd class="kbd-hint {activeKeys.ArrowDown ? 'active-press' : ''}">↓</kbd>
+                  <span class="dock-key-label">Clear</span>
+                </button>
                 <div class="dock-key-item">
                   <kbd class="kbd-hint {activeKeys.ArrowRight ? 'active-press keep-press' : ''}">→</kbd>
                   <span class="dock-key-label">{mode === 'swipe' ? 'Keep' : 'Next'}</span>
