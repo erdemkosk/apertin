@@ -83,7 +83,7 @@
 
   function addRecentFolder(path) {
     if (!path) return;
-    recentFolders = [path, ...recentFolders.filter(p => p !== path)].slice(0, 5);
+    recentFolders = [path, ...recentFolders.filter(p => p !== path)].slice(0, 3);
     localStorage.setItem('recent_folders', JSON.stringify(recentFolders));
   }
 
@@ -96,24 +96,6 @@
   function openRecentFolder(path) {
     dirPath = path;
     startScan();
-  }
-
-  let bestFocusInGroup = {};
-  $: {
-    const best = {};
-    for (let i = 0; i < files.length; i++) {
-      const gid = groupAssignments[i];
-      if (gid != null && (groupSizes[gid] ?? 0) > 1) {
-        const file = files[i];
-        const score = file.sharpness ?? -1;
-        if (score >= 0) {
-          if (best[gid] === undefined || score > (files[best[gid]]?.sharpness ?? -1)) {
-            best[gid] = i;
-          }
-        }
-      }
-    }
-    bestFocusInGroup = best;
   }
 
   // Context Menu State
@@ -1178,9 +1160,6 @@
               <span class="file-name">{file.file_name}</span>
             </div>
             <div class="file-badges">
-              {#if bestFocusInGroup[gid] === idx}
-                <span class="item-badge focus-best" title="Best Focus in Group">🎯</span>
-              {/if}
               {#if keepList.has(file.file_path)}
                 <span class="item-badge keep">✓</span>
               {/if}
@@ -1484,9 +1463,6 @@
                           <div class="grid-thumb-container">
                             <img src={fetchPreviewUrl(idx)} alt={file.file_name} class="grid-thumb" loading="lazy" />
                             <div class="grid-card-badges">
-                              {#if bestFocusInGroup[groupAssignments[idx]] === idx}
-                                <span class="grid-badge focus-best" title="Best Focus in Group">🎯</span>
-                              {/if}
                               {#if keepList.has(file.file_path)}
                                 <span class="grid-badge keep">✓</span>
                               {/if}
@@ -1500,9 +1476,6 @@
                           </div>
                           <div class="grid-card-info">
                             <span class="grid-filename">{file.file_name}</span>
-                            {#if file.sharpness}
-                              <span class="grid-sharpness">⚡ {Math.round(file.sharpness)}</span>
-                            {/if}
                           </div>
                         </div>
                       {/each}
@@ -1648,11 +1621,7 @@
               <span class="exif-label">ISO</span>
               <span class="exif-val">ISO {files[currentIndex]?.iso || 'N/A'}</span>
             </div>
-            <div class="exif-divider"></div>
-            <div class="exif-item">
-              <span class="exif-label">SHARPNESS</span>
-              <span class="exif-val">{files[currentIndex]?.sharpness ? Math.round(files[currentIndex].sharpness) : 'N/A'}</span>
-            </div>
+
             <div class="exif-divider"></div>
             <div class="exif-item">
               <span class="exif-label">FOCAL LENGTH</span>
@@ -2577,28 +2546,28 @@
   }
 
   .recent-folders-container {
-    margin-top: 24px;
+    margin-top: 16px;
     text-align: left;
     width: 100%;
     border-top: 1px dashed hsl(var(--border-muted));
-    padding-top: 20px;
+    padding-top: 14px;
   }
 
   .recent-title {
     font-family: var(--font-display);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.15em;
     color: hsl(var(--text-muted));
     text-transform: uppercase;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .recent-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    max-height: 240px;
+    gap: 6px;
+    max-height: 130px;
     overflow-y: auto;
     padding-right: 4px;
   }
@@ -2607,7 +2576,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-radius: 8px;
     border: 1px solid hsl(var(--border-muted));
     background: hsl(var(--bg-input) / 0.3);
@@ -2674,7 +2643,9 @@
   .welcome-container {
     max-width: 460px;
     width: 100%;
-    padding: 40px 36px;
+    max-height: 92vh;
+    overflow-y: auto;
+    padding: 30px 36px;
     border-radius: 16px;
     text-align: center;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
@@ -3076,7 +3047,6 @@
   .item-badge.keep { background: hsl(var(--accent-keep) / 0.2); color: hsl(var(--accent-keep)); }
   .item-badge.trash { background: hsl(var(--accent-trash) / 0.2); color: hsl(var(--accent-trash)); }
   .item-badge.star { background: hsl(var(--accent-star) / 0.2); color: hsl(var(--accent-star)); }
-  .item-badge.focus-best { background: hsl(var(--accent-amber) / 0.2); color: hsl(var(--accent-amber)); }
 
   /* Context Menu Styles */
   .custom-context-menu {
@@ -3256,10 +3226,7 @@
     border-top: 1px solid hsl(var(--border-muted));
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    box-sizing: border-box;
-    width: 100%;
+    justify-content: center;
   }
 
   .grid-filename {
@@ -3269,19 +3236,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
-    text-align: left;
-  }
-
-  .grid-sharpness {
-    font-size: 10px;
-    font-weight: 600;
-    color: hsl(var(--accent-amber));
-    white-space: nowrap;
-  }
-
-  .grid-badge.focus-best {
-    background: hsl(var(--accent-amber));
-    color: #fff;
+    width: 100%;
+    text-align: center;
   }
 </style>

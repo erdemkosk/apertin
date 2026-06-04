@@ -21,7 +21,6 @@ pub struct RawMetadata {
     pub orientation: Option<u16>,
     pub preview_offset: u32,
     pub preview_length: u32,
-    pub sharpness: Option<f32>,
 }
 
 impl RawMetadata {
@@ -42,7 +41,6 @@ impl RawMetadata {
             orientation: None,
             preview_offset: 0,
             preview_length: 0,
-            sharpness: None,
         }
     }
 }
@@ -428,59 +426,6 @@ pub fn parse_isobmff(
     }
 }
 
-/// Computes the focus/sharpness score of a JPEG image using Laplacian variance.
-/// A higher score indicates a sharper, better-focused image.
-pub fn compute_laplacian_variance(jpeg_bytes: &[u8]) -> Option<f32> {
-    let img = image::load_from_memory(jpeg_bytes).ok()?;
-    // For performance, downscale the image if it is too large.
-    // Sharpness on a 480px thumbnail is extremely fast and accurate enough.
-    let resized = if img.width() > 480 || img.height() > 480 {
-        img.thumbnail(480, 480)
-    } else {
-        img
-    };
-    let gray = resized.to_luma8();
-    let (width, height) = (gray.width() as usize, gray.height() as usize);
-    if width < 3 || height < 3 {
-        return None;
-    }
-
-    let pixels = gray.as_raw();
-
-    // Laplacian 3x3 kernel:
-    // [  0,  1,  0 ]
-    // [  1, -4,  1 ]
-    // [  0,  1,  0 ]
-    let mut laplacian_values = Vec::with_capacity((width - 2) * (height - 2));
-
-    for y in 1..height - 1 {
-        for x in 1..width - 1 {
-            let center = pixels[y * width + x] as f32;
-            let left = pixels[y * width + (x - 1)] as f32;
-            let right = pixels[y * width + (x + 1)] as f32;
-            let top = pixels[(y - 1) * width + x] as f32;
-            let bottom = pixels[(y + 1) * width + x] as f32;
-
-            let lap = left + right + top + bottom - 4.0 * center;
-            laplacian_values.push(lap);
-        }
-    }
-
-    if laplacian_values.is_empty() {
-        return None;
-    }
-
-    // Variance: E[X^2] - (E[X])^2
-    let count = laplacian_values.len() as f64;
-    let sum: f64 = laplacian_values.iter().map(|&x| x as f64).sum();
-    let sum_sq: f64 = laplacian_values.iter().map(|&x| (x as f64) * (x as f64)).sum();
-
-    let mean = sum / count;
-    let variance = (sum_sq / count) - (mean * mean);
-
-    Some(variance as f32)
-}
-
 /// Computes a 64-bit dHash (difference hash) from raw JPEG bytes.
 /// Perceptual hash (pHash) via 2-D DCT.
 ///
@@ -712,17 +657,6 @@ pub fn scan_for_largest_jpeg(data: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
-fn calculate_sharpness(mmap: &[u8], meta: &mut RawMetadata) {
-    if meta.preview_length > 0 {
-        let start = meta.preview_offset as usize;
-        let end = start + meta.preview_length as usize;
-        if end <= mmap.len() {
-            let jpeg_bytes = &mmap[start..end];
-            meta.sharpness = compute_laplacian_variance(jpeg_bytes);
-        }
-    }
-}
-
 // Main API function to parse any RAW file
 pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
     let path = Path::new(file_path);
@@ -756,7 +690,6 @@ pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
         if let Some(tiff_slice) = extract_tiff_from_jpeg(&mmap) {
             parse_tiff_bytes(tiff_slice, &mut meta, false);
         }
-        calculate_sharpness(&mmap, &mut meta);
         return Ok(meta);
     } else if ext == "png" || mmap.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
         // Standalone PNG — the file itself is the displayable image.
@@ -769,7 +702,6 @@ pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
         }
         // Try to extract EXIF from eXIf / tEXt chunks
         parse_png_exif(&mmap, &mut meta);
-        calculate_sharpness(&mmap, &mut meta);
         return Ok(meta);
     } else if ext == "cr3" {
         parse_isobmff(&mmap, 0, mmap.len(), &mut meta);
@@ -806,7 +738,6 @@ pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
                 parse_tiff_bytes(&mmap[exif_start..], &mut meta, false);
             }
         }
-        calculate_sharpness(&mmap, &mut meta);
         return Ok(meta);
     } else {
         // Assume TIFF-based (ARW, NEF, CR2, DNG, etc.)
@@ -830,7 +761,6 @@ pub fn parse_raw_file(file_path: &str) -> Result<RawMetadata, String> {
         }
     }
 
-    calculate_sharpness(&mmap, &mut meta);
     Ok(meta)
 }
 
